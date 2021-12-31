@@ -32,6 +32,7 @@ def main():
 
     log_dir = os.path.expanduser(args.log_dir)
     eval_log_dir = log_dir + "_eval"
+    log_dir = f"{log_dir}/{args.env_name}"
     utils.cleanup_log_dir(log_dir)
     utils.cleanup_log_dir(eval_log_dir)
 
