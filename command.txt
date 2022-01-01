@@ -1,6 +1,6 @@
 1. A2C
 python main.py --env-name "PongNoFrameskip-v4" --seed 1
-python main.py --env-name "BreakoutNoFrameskip-v4" --seed 1
+python main.py --env-name "BreakoutNoFrameskip-v4" --seed 1 --algo b_a2c
 python main.py --env-name "SeaquestNoFrameskip-v4" --seed 1
 
 2. PPO

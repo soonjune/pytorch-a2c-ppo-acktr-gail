@@ -17,7 +17,7 @@ from a2c_ppo_acktr import algo, utils
 from a2c_ppo_acktr.algo import gail
 from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
-from a2c_ppo_acktr.model import Policy
+from a2c_ppo_acktr.model import Policy, Bandit_Policy
 from a2c_ppo_acktr.storage import RolloutStorage
 from evaluation import evaluate
 
@@ -75,6 +75,25 @@ def main():
             lr=args.lr,
             eps=args.eps,
             max_grad_norm=args.max_grad_norm)
+    elif args.algo == 'b_a2c':
+        nbArms = args.nbArms
+        bandit_dim = args.bandit_dim
+        bandit = Bandit_Policy(
+            envs.observation_space.shape,
+            envs.action_space,
+            nbArms,
+            bandit_dim,
+            base_kwargs={'recurrent': args.recurrent_policy})
+        bandit.to(device)
+        agent = algo.Bandit_A2C_ACKTR(
+            actor_critic,
+            bandit,
+            args.value_loss_coef,
+            args.entropy_coef,
+            lr=args.lr,
+            eps=args.eps,
+            alpha=args.alpha,
+            max_grad_norm=args.max_grad_norm)
     elif args.algo == 'acktr':
         agent = algo.A2C_ACKTR(
             actor_critic, args.value_loss_coef, args.entropy_coef, acktr=True)
@@ -128,6 +147,9 @@ def main():
                 value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
                     rollouts.obs[step], rollouts.recurrent_hidden_states[step],
                     rollouts.masks[step])
+                if args.algo == 'b_a2c':
+                    skips = bandit.get_skip(rollouts.obs[step], rollouts.recurrent_hidden_states[step],
+                    rollouts.masks[step], action, args.num_processes)
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)

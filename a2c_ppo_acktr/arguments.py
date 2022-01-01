@@ -149,13 +149,24 @@ def get_args():
         action='store_true',
         default=False,
         help='use a linear schedule on the learning rate')
+
+    ## for bandit
+    parser.add_argument(
+        '--nbArms',
+        default=5,
+        help='max extend length')
+    parser.add_argument(
+        '--bandit-dim',
+        default=30,
+        help='latent dim of bandit net')
+
     args = parser.parse_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    assert args.algo in ['a2c', 'ppo', 'acktr']
+    assert args.algo in ['a2c', 'ppo', 'acktr', 'b_a2c']
     if args.recurrent_policy:
-        assert args.algo in ['a2c', 'ppo'], \
+        assert args.algo in ['a2c', 'ppo', 'b_a2c'], \
             'Recurrent policy is not implemented for ACKTR'
 
     return args
