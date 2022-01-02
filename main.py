@@ -138,9 +138,9 @@ def main():
 
     log_file = open(log_file_name,'a', newline='')
     log_file_wr = csv.writer(log_file)
-    log_file_wr.writerow(['Updates', 'total_num_steps', 'Last 10 mean_episode_rewards'])
+    log_file_wr.writerow(['Updates', 'total_num_steps', 'Last 10 mean_episode_rewards', 'Avg_skips'])
     for j in range(num_updates):
-
+        skips_l = []
         if args.use_linear_lr_decay:
             # decrease learning rate linearly
             utils.update_linear_schedule(
@@ -151,26 +151,29 @@ def main():
             # Sample actions
             with torch.no_grad():
                 if args.algo == 'b_a2c':
-                    if step+j>0 and len(zero_idx)>0:
-                        start_obs[zero_idx] = rollouts.obs[step][zero_idx].clone().detach() # update start skip obs of all processes
-                        value[zero_idx], action[zero_idx], action_log_prob[zero_idx], recurrent_hidden_states[zero_idx] = actor_critic.act(
-                            rollouts.obs[step][zero_idx], rollouts.recurrent_hidden_states[step][zero_idx],
-                            rollouts.masks[step][zero_idx])
-                        arms[zero_idx] = bandit.get_skip(rollouts.obs[step][zero_idx], rollouts.recurrent_hidden_states[step][zero_idx],
-                        rollouts.masks[step][zero_idx], action[zero_idx], len(zero_idx))
-                    else:
+                    if step+j>0:
+                        if len(zero_idx)>0: # skip update
+                            start_obs[zero_idx] = rollouts.obs[step][zero_idx].clone().detach() # update start skip obs of all processes
+                            value[zero_idx], action[zero_idx], action_log_prob[zero_idx], recurrent_hidden_states[zero_idx] = actor_critic.act(
+                                rollouts.obs[step][zero_idx], rollouts.recurrent_hidden_states[step][zero_idx],
+                                rollouts.masks[step][zero_idx])
+                            arms[zero_idx] = bandit.get_skip(rollouts.obs[step][zero_idx], rollouts.recurrent_hidden_states[step][zero_idx],
+                            rollouts.masks[step][zero_idx], action[zero_idx], len(zero_idx))     
+                            skips[zero_idx] = arms[zero_idx] + 1                    
+                    else: # initialization
                         start_obs = rollouts.obs[step].clone().detach() # reset start skip obs of all processes
                         value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
                         rollouts.obs[step], rollouts.recurrent_hidden_states[step],
                         rollouts.masks[step])
                         arms = bandit.get_skip(rollouts.obs[step], rollouts.recurrent_hidden_states[step],
                         rollouts.masks[step], action, args.num_processes)
-                    skips = arms+1
+                        skips = arms+1
                 else:
                     value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
                         rollouts.obs[step], rollouts.recurrent_hidden_states[step],
                         rollouts.masks[step])
-
+                    skips = 1
+            skips_l.append(np.mean(skips))
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
@@ -194,7 +197,8 @@ def main():
                 skips = masks.squeeze().numpy()*(skips-1)
                 zero_idx = np.where(skips==0)[0]
                 for idx in zero_idx:
-                    skip_replay_buffer.add_transition(start_obs[idx], action[idx], obs[idx], recurrent_hidden_states[idx], reward[idx], masks[idx], arms[idx]) 
+                    skip_replay_buffer.add_transition(start_obs[idx], action[idx], obs[idx],\
+                        recurrent_hidden_states[idx], reward[idx], masks[idx], arms[idx]) 
 
         with torch.no_grad():
             next_value = actor_critic.get_value(
@@ -230,10 +234,10 @@ def main():
             batch_skip_obs, batch_skip_actions, batch_skip_next_obs, batch_recurrent_hidden_states, _, \
             batch_masks, batch_skip_arms = skip_replay_buffer.random_next_batch(64)
             # reward 포함
-            '''target_rewards = batch_rewards + (1 - batch_terminal_flags) * self._gamma * \
+            '''target_rewards = batch_rewards + batch_masks.detach().to(device) * self._gamma * \
                         torch.max(self._q(batch_next_states), dim=1)[0]'''
             # reward 미포함
-            target_rewards = actor_critic.get_value(
+            target_rewards = batch_masks.detach().to(device)*actor_critic.get_value(    # test 1.batch_masks 추가 -> 이게 잘되는듯?
                     batch_skip_next_obs, batch_recurrent_hidden_states,
                     batch_masks).detach()
 
@@ -267,7 +271,7 @@ def main():
                         action_loss))
             log_file = open(log_file_name,'a', newline='')
             log_file_wr = csv.writer(log_file)
-            log_file_wr.writerow([j, total_num_steps, np.round(np.mean(episode_rewards),1)])
+            log_file_wr.writerow([j, total_num_steps, np.round(np.mean(episode_rewards),1), np.round(np.mean(skips_l),1)])
             log_file.close()
 
         if (args.eval_interval is not None and len(episode_rewards) > 1

@@ -259,7 +259,6 @@ class SkipReplayBuffer:
     def random_next_batch(self, batch_size):
         batch_indices = np.random.choice(len(self._data.states), batch_size)
         batch_states = torch.stack([self._data.states[i] for i in batch_indices])
-        #batch_states = np.array([self._data.states[i] for i in batch_indices])
         batch_actions = torch.stack([self._data.actions[i] for i in batch_indices])
         batch_next_states = torch.stack([self._data.next_states[i] for i in batch_indices])
         batch_recurrent_hidden_states = torch.stack([self._data.recurrent_hidden_states[i] for i in batch_indices])

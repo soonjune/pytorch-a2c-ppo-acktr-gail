@@ -247,7 +247,7 @@ class BanditNet(nn.Module):
 
 
 class Bandit_Policy(Policy):
-    def __init__(self, obs_shape, action_space, nbArms, bandit_dim, base=None, reg=1,sigma=0.5, nu=0.5, base_kwargs=None):
+    def __init__(self, obs_shape, action_space, nbArms, bandit_dim, base=None, reg=10, sigma=0.5, nu=0.5, base_kwargs=None):  # test 2.reg 1->10
         super(Bandit_Policy, self).__init__(obs_shape, action_space, base=base, base_kwargs=base_kwargs)
         self.reg = reg
         self.nu = nu
@@ -304,8 +304,8 @@ class Bandit_Policy(Policy):
         states = actor_features.float().detach() # BxS
         extend_length = extend_length.view(-1, 1) # Bx1
         actions = F.one_hot(actions.squeeze(), num_classes=self.num_outputs).float().reshape(batch_size, -1) # BxA
-        v = torch.arange(self.nbArms).repeat(batch_size,1).to(device) # BxK
-        many_hot_arm_idx = (v <= extend_length).float()  # BxK
+        v = torch.arange(self.nbArms).repeat(batch_size,1) # BxK
+        many_hot_arm_idx = (v <= extend_length).float().to(device)  # BxK
         target_rewards = torch.reshape(target_rewards, (-1,1)).to(device)
         contexts = torch.cat((states, actions, many_hot_arm_idx), dim=1).to(device) # Bx(D+A+N)     64x521
 
