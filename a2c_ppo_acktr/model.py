@@ -6,11 +6,11 @@ import torch.nn.functional as F
 from a2c_ppo_acktr.distributions import Bernoulli, Categorical, DiagGaussian
 from a2c_ppo_acktr.utils import init
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class Flatten(nn.Module):
     def forward(self, x):
         return x.view(x.size(0), -1)
-
 
 class Policy(nn.Module):
     def __init__(self, obs_shape, action_space, base=None, base_kwargs=None):
@@ -28,14 +28,14 @@ class Policy(nn.Module):
         self.base = base(obs_shape[0], **base_kwargs)
 
         if action_space.__class__.__name__ == "Discrete":
-            num_outputs = action_space.n
-            self.dist = Categorical(self.base.output_size, num_outputs)
+            self.num_outputs = action_space.n
+            self.dist = Categorical(self.base.output_size, self.num_outputs)
         elif action_space.__class__.__name__ == "Box":
-            num_outputs = action_space.shape[0]
-            self.dist = DiagGaussian(self.base.output_size, num_outputs)
+            self.num_outputs = action_space.shape[0]
+            self.dist = DiagGaussian(self.base.output_size, self.num_outputs)
         elif action_space.__class__.__name__ == "MultiBinary":
-            num_outputs = action_space.shape[0]
-            self.dist = Bernoulli(self.base.output_size, num_outputs)
+            self.num_outputs = action_space.shape[0]
+            self.dist = Bernoulli(self.base.output_size, self.num_outputs)
         else:
             raise NotImplementedError
 
@@ -172,7 +172,7 @@ class CNNBase(NNBase):
 
         init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
                                constant_(x, 0), nn.init.calculate_gain('relu'))
-
+        self.hidden_size = hidden_size
         self.main = nn.Sequential(
             init_(nn.Conv2d(num_inputs, 32, 8, stride=4)), nn.ReLU(),
             init_(nn.Conv2d(32, 64, 4, stride=2)), nn.ReLU(),
@@ -227,3 +227,72 @@ class MLPBase(NNBase):
         hidden_actor = self.actor(x)
 
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs
+
+
+class BanditNet(nn.Module):
+    def __init__(self, context_dim, bandit_dim, hidden_size=128):
+        super(BanditNet, self).__init__()
+        init_ = lambda m: init(m, nn.init.orthogonal_, lambda x: nn.init.
+                               constant_(x, 0), nn.init.calculate_gain('relu'))
+
+        self.main = nn.Sequential(
+            init_(nn.Linear(context_dim, hidden_size)), nn.ReLU(),
+            init_(nn.Linear(hidden_size, hidden_size)), nn.ReLU())
+        self.bandit_linear = init_(nn.Linear(hidden_size, bandit_dim))
+        self.train()
+
+    def forward(self, x):
+        x = self.main(x)
+        return self.bandit_linear(x)
+
+
+class Bandit_Policy(Policy):
+    def __init__(self, obs_shape, action_space, nbArms, bandit_dim, base=None, reg=1,sigma=0.5, nu=0.5, base_kwargs=None):
+        super(Bandit_Policy, self).__init__(obs_shape, action_space, base=base, base_kwargs=base_kwargs)
+        self.reg = reg
+        self.nu = nu
+        self.sigma = sigma
+        self.nbArms = nbArms
+        self.context_dim = self.base.hidden_size + self.num_outputs + nbArms #context dim = |S|+|A|+|N| 521
+        self.bandit_dim = bandit_dim # 30
+        self.Bandit_Net = BanditNet(self.context_dim, self.bandit_dim)
+
+        self.clear()
+
+    def clear(self):
+        with torch.no_grad():
+            # initialize the design matrix, its inverse, 
+            # the vector containing the sum of r_s*x_s and the least squares estimate
+            self.t=1
+            self.Design=[]
+            self.DesignInv=[]
+            self.Vector=[]
+            self.thetaLS=[]
+            self.Design=self.reg*torch.eye(self.bandit_dim, device=device)  # dxd
+            self.DesignInv=(1/self.reg)*torch.eye(self.bandit_dim, device=device)
+            self.Vector=torch.zeros((self.bandit_dim,1), device=device)
+            self.thetaLS=torch.zeros((self.bandit_dim,1), device=device) # regularized least-squares estimate
+    
+    def get_skip(self, inputs, rnn_hxs, masks, action, num_processes, deterministic=False):
+        value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
+
+        state =  actor_features # 16xS
+        action = F.one_hot(action.squeeze(), num_classes=self.num_outputs)# 16x1
+
+        context = torch.cat((state ,action), dim=-1) # 16x(S+A)
+        context = context.repeat(self.nbArms,1) # 16Kx(S+A)
+
+        v = torch.arange(self.nbArms).repeat(self.nbArms*num_processes,1) # 16K x K
+        arm_idx = torch.repeat_interleave(torch.arange(self.nbArms),num_processes).reshape(-1,1)
+        many_hot_arm_idx = (v<=arm_idx).float().to(device) # 16Kx16K
+        context = torch.cat((context,many_hot_arm_idx),dim=1).to(device) #16Kx(S+A+N)
+
+        with torch.no_grad():
+            N = torch.distributions.multivariate_normal.MultivariateNormal(self.thetaLS.view(-1),(self.nu*self.nu)*self.DesignInv)
+            theta_tilda = N.sample() # d
+            theta_tilda = torch.as_tensor(theta_tilda).to(device)
+            z = self.Bandit_Net(context) # 16Kxd
+            reward_tilda = torch.matmul(z,theta_tilda) # 16Kx1
+            reward_tilda = reward_tilda.reshape(self.nbArms,-1) # k x 16
+            chosen_arm = torch.argmax(reward_tilda, 0).cpu().detach().numpy()
+        return chosen_arm
