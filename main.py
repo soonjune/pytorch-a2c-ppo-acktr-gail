@@ -18,7 +18,7 @@ from a2c_ppo_acktr.algo import gail
 from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import Policy, Bandit_Policy
-from a2c_ppo_acktr.storage import RolloutStorage
+from a2c_ppo_acktr.storage import RolloutStorage, SkipReplayBuffer
 from evaluation import evaluate
 
 
@@ -64,6 +64,7 @@ def main():
             eps=args.eps,
             alpha=args.alpha,
             max_grad_norm=args.max_grad_norm)
+
     elif args.algo == 'ppo':
         agent = algo.PPO(
             actor_critic,
@@ -75,6 +76,7 @@ def main():
             lr=args.lr,
             eps=args.eps,
             max_grad_norm=args.max_grad_norm)
+
     elif args.algo == 'b_a2c':
         nbArms = args.nbArms
         bandit_dim = args.bandit_dim
@@ -85,6 +87,7 @@ def main():
             bandit_dim,
             base_kwargs={'recurrent': args.recurrent_policy})
         bandit.to(device)
+        skip_replay_buffer = SkipReplayBuffer(1e7)
         agent = algo.Bandit_A2C_ACKTR(
             actor_critic,
             bandit,
@@ -94,6 +97,9 @@ def main():
             eps=args.eps,
             alpha=args.alpha,
             max_grad_norm=args.max_grad_norm)
+        skips = np.zeros(args.num_processes)
+        zero_idx = np.arange(args.num_processes)
+
     elif args.algo == 'acktr':
         agent = algo.A2C_ACKTR(
             actor_critic, args.value_loss_coef, args.entropy_coef, acktr=True)
@@ -144,12 +150,27 @@ def main():
         for step in range(args.num_steps):
             # Sample actions
             with torch.no_grad():
-                value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
-                    rollouts.obs[step], rollouts.recurrent_hidden_states[step],
-                    rollouts.masks[step])
                 if args.algo == 'b_a2c':
-                    skips = bandit.get_skip(rollouts.obs[step], rollouts.recurrent_hidden_states[step],
-                    rollouts.masks[step], action, args.num_processes)
+                    if step+j>0 and len(zero_idx)>0:
+                        start_obs[zero_idx] = rollouts.obs[step][zero_idx].clone().detach() # update start skip obs of all processes
+                        value[zero_idx], action[zero_idx], action_log_prob[zero_idx], recurrent_hidden_states[zero_idx] = actor_critic.act(
+                            rollouts.obs[step][zero_idx], rollouts.recurrent_hidden_states[step][zero_idx],
+                            rollouts.masks[step][zero_idx])
+                        arms[zero_idx] = bandit.get_skip(rollouts.obs[step][zero_idx], rollouts.recurrent_hidden_states[step][zero_idx],
+                        rollouts.masks[step][zero_idx], action[zero_idx], len(zero_idx))
+                    else:
+                        start_obs = rollouts.obs[step].clone().detach() # reset start skip obs of all processes
+                        value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
+                        rollouts.obs[step], rollouts.recurrent_hidden_states[step],
+                        rollouts.masks[step])
+                        arms = bandit.get_skip(rollouts.obs[step], rollouts.recurrent_hidden_states[step],
+                        rollouts.masks[step], action, args.num_processes)
+                    skips = arms+1
+                else:
+                    value, action, action_log_prob, recurrent_hidden_states = actor_critic.act(
+                        rollouts.obs[step], rollouts.recurrent_hidden_states[step],
+                        rollouts.masks[step])
+
 
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
@@ -164,8 +185,16 @@ def main():
             bad_masks = torch.FloatTensor(
                 [[0.0] if 'bad_transition' in info.keys() else [1.0]
                  for info in infos])
+            
             rollouts.insert(obs, recurrent_hidden_states, action,
                             action_log_prob, value, reward, masks, bad_masks)
+            
+            # skip replay buffer
+            if args.algo == 'b_a2c': 
+                skips = masks.squeeze().numpy()*(skips-1)
+                zero_idx = np.where(skips==0)[0]
+                for idx in zero_idx:
+                    skip_replay_buffer.add_transition(start_obs[idx], action[idx], obs[idx], recurrent_hidden_states[idx], reward[idx], masks[idx], arms[idx]) 
 
         with torch.no_grad():
             next_value = actor_critic.get_value(
@@ -188,12 +217,28 @@ def main():
                     rollouts.obs[step], rollouts.actions[step], args.gamma,
                     rollouts.masks[step])
 
+        # Update Policy
         rollouts.compute_returns(next_value, args.use_gae, args.gamma,
                                  args.gae_lambda, args.use_proper_time_limits)
 
         value_loss, action_loss, dist_entropy = agent.update(rollouts)
 
         rollouts.after_update()
+
+        if args.algo == 'b_a2c': 
+            # Update Bandit
+            batch_skip_obs, batch_skip_actions, batch_skip_next_obs, batch_recurrent_hidden_states, _, \
+            batch_masks, batch_skip_arms = skip_replay_buffer.random_next_batch(64)
+            # reward 포함
+            '''target_rewards = batch_rewards + (1 - batch_terminal_flags) * self._gamma * \
+                        torch.max(self._q(batch_next_states), dim=1)[0]'''
+            # reward 미포함
+            target_rewards = actor_critic.get_value(
+                    batch_skip_next_obs, batch_recurrent_hidden_states,
+                    batch_masks).detach()
+
+            agent.bandit_train(batch_skip_obs, batch_skip_actions, batch_recurrent_hidden_states, batch_masks,\
+                    batch_skip_arms, target_rewards, 64)       
 
         # save for every interval-th episode or for the last epoch
         if (j % args.save_interval == 0

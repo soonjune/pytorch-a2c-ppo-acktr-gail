@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 
 from a2c_ppo_acktr.algo.kfac import KFACOptimizer
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class Bandit_A2C_ACKTR():
     def __init__(self,
@@ -82,3 +84,8 @@ class Bandit_A2C_ACKTR():
         self.optimizer.step()
 
         return value_loss.item(), action_loss.item(), dist_entropy.item()
+
+    def bandit_train(self, obs, actions, rnn_hxs, masks, extend_length, target_rewards, batch_size):
+        self.bandit.bandit_update(obs, actions, rnn_hxs, masks, extend_length, target_rewards, batch_size, self.b_optimizer)
+
+

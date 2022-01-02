@@ -1,6 +1,10 @@
 import torch
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
+from collections import namedtuple
+import numpy as np
+from torch.autograd import Variable
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def _flatten_helper(T, N, _tensor):
     return _tensor.view(T * N, *_tensor.size()[2:])
@@ -200,3 +204,67 @@ class RolloutStorage(object):
 
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
                 value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
+
+
+def tt(ndarray):
+    """
+    Helper Function to cast observation to correct type/device
+    """
+    if device == "cuda":
+        return Variable(torch.from_numpy(ndarray).float().cuda(), requires_grad=False)
+    else:
+        return Variable(torch.from_numpy(ndarray).float(), requires_grad=False)
+
+def tt_long(ndarray):
+    """
+    Helper Function to cast observation to correct type/device
+    """
+    if device == "cuda":
+        return Variable(torch.from_numpy(ndarray).long().cuda(), requires_grad=False)
+    else:
+        return Variable(torch.from_numpy(ndarray).long(), requires_grad=False)
+
+class SkipReplayBuffer:
+    """
+    Replay Buffer for training the bandit.
+    """
+
+    def __init__(self, max_size):
+        self._data = namedtuple("ReplayBuffer", ["states", "actions", "next_states", "recurrent_hidden_states",
+                                                 "rewards", "masks", "lengths"])
+        self._data = self._data(states=[], actions=[], next_states=[], recurrent_hidden_states=[], \
+            rewards=[], masks=[], lengths=[])
+        self._size = 0
+        self._max_size = max_size
+
+    def add_transition(self, state, action, next_state, recurrent_hidden_states, reward, masks, length):
+        self._data.states.append(state)
+        self._data.actions.append(action)
+        self._data.next_states.append(next_state)
+        self._data.recurrent_hidden_states.append(recurrent_hidden_states)
+        self._data.rewards.append(reward)
+        self._data.masks.append(masks)
+        self._data.lengths.append(length)  # Observed skip-length of the transition
+        self._size += 1
+
+        if self._size > self._max_size:
+            self._data.states.pop(0)
+            self._data.actions.pop(0)
+            self._data.next_states.pop(0)
+            self._data.recurrent_hidden_states.pop(0)
+            self._data.rewards.pop(0)
+            self._data.masks.pop(0)
+            self._data.lengths.pop(0)
+
+    def random_next_batch(self, batch_size):
+        batch_indices = np.random.choice(len(self._data.states), batch_size)
+        batch_states = torch.stack([self._data.states[i] for i in batch_indices])
+        #batch_states = np.array([self._data.states[i] for i in batch_indices])
+        batch_actions = torch.stack([self._data.actions[i] for i in batch_indices])
+        batch_next_states = torch.stack([self._data.next_states[i] for i in batch_indices])
+        batch_recurrent_hidden_states = torch.stack([self._data.recurrent_hidden_states[i] for i in batch_indices])
+        batch_rewards = torch.stack([self._data.rewards[i] for i in batch_indices])
+        batch_masks = torch.stack([self._data.masks[i] for i in batch_indices])
+        batch_lengths = np.array([self._data.lengths[i] for i in batch_indices])
+        return batch_states, batch_actions, batch_next_states,\
+               batch_recurrent_hidden_states, batch_rewards, batch_masks, tt_long(batch_lengths)

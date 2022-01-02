@@ -253,7 +253,7 @@ class Bandit_Policy(Policy):
         self.nu = nu
         self.sigma = sigma
         self.nbArms = nbArms
-        self.context_dim = self.base.hidden_size + self.num_outputs + nbArms #context dim = |S|+|A|+|N| 521
+        self.context_dim = self.base.hidden_size + self.num_outputs + nbArms #context dim = |S|+|A|+|K| 521
         self.bandit_dim = bandit_dim # 30
         self.Bandit_Net = BanditNet(self.context_dim, self.bandit_dim)
 
@@ -276,16 +276,15 @@ class Bandit_Policy(Policy):
     def get_skip(self, inputs, rnn_hxs, masks, action, num_processes, deterministic=False):
         value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
 
-        state =  actor_features # 16xS
-        action = F.one_hot(action.squeeze(), num_classes=self.num_outputs)# 16x1
-
+        state =  actor_features.float() # 16xS
+        action = F.one_hot(action.squeeze(), num_classes=self.num_outputs).float().reshape(num_processes, -1) # 16xA
         context = torch.cat((state ,action), dim=-1) # 16x(S+A)
         context = context.repeat(self.nbArms,1) # 16Kx(S+A)
 
         v = torch.arange(self.nbArms).repeat(self.nbArms*num_processes,1) # 16K x K
         arm_idx = torch.repeat_interleave(torch.arange(self.nbArms),num_processes).reshape(-1,1)
         many_hot_arm_idx = (v<=arm_idx).float().to(device) # 16Kx16K
-        context = torch.cat((context,many_hot_arm_idx),dim=1).to(device) #16Kx(S+A+N)
+        context = torch.cat((context,many_hot_arm_idx),dim=1).to(device) #16Kx(S+A+K)
 
         with torch.no_grad():
             N = torch.distributions.multivariate_normal.MultivariateNormal(self.thetaLS.view(-1),(self.nu*self.nu)*self.DesignInv)
@@ -296,3 +295,40 @@ class Bandit_Policy(Policy):
             reward_tilda = reward_tilda.reshape(self.nbArms,-1) # k x 16
             chosen_arm = torch.argmax(reward_tilda, 0).cpu().detach().numpy()
         return chosen_arm
+
+    def bandit_update(self, obs, actions, rnn_hxs, masks, extend_length, target_rewards, batch_size, b_optimizer):
+        self.Bandit_Net.train()
+        with torch.no_grad():
+            value, actor_features, rnn_hxs = self.base(obs, rnn_hxs, masks)
+
+        states = actor_features.float().detach() # BxS
+        extend_length = extend_length.view(-1, 1) # Bx1
+        actions = F.one_hot(actions.squeeze(), num_classes=self.num_outputs).float().reshape(batch_size, -1) # BxA
+        v = torch.arange(self.nbArms).repeat(batch_size,1).to(device) # BxK
+        many_hot_arm_idx = (v <= extend_length).float()  # BxK
+        target_rewards = torch.reshape(target_rewards, (-1,1)).to(device)
+        contexts = torch.cat((states, actions, many_hot_arm_idx), dim=1).to(device) # Bx(D+A+N)     64x521
+
+        z = self.Bandit_Net(contexts) # Bxd
+        N=torch.distributions.multivariate_normal.MultivariateNormal(self.thetaLS.view(-1),(self.nu*self.nu)*self.DesignInv)
+        theta_tilda=N.sample()
+        theta_tilda=torch.reshape(torch.as_tensor(theta_tilda), (-1,1)).to(device) # dx1
+        reward_tilda=torch.matmul(z,theta_tilda).to(device) #Bx1
+        bandit_loss = F.mse_loss(reward_tilda, target_rewards.detach())
+        # Optimize the model
+        b_optimizer.zero_grad()
+        bandit_loss.backward()
+        for param in self.Bandit_Net.parameters():
+            param.grad.data.clamp_(-1, 1)
+        b_optimizer.step()
+
+        # Update theta
+        with torch.no_grad():
+            self.Design = self.Design + torch.matmul(z.T,z) # (dxB) x (Bxd) -> dxd 
+            self.Vector = self.Vector + torch.sum(target_rewards.detach()*z, 0).view(-1,1) # Bx1 * Bxd -> Bxd -> dx1
+            # online update of the inverse of the design matrix
+            omega=torch.matmul(z,self.DesignInv) # (Bxd) x (dxd) -> Bxd           
+            self.DesignInv= self.DesignInv- torch.matmul(omega.T,omega)/(1+torch.trace(torch.matmul(z,omega.T)).item()) # (dxd) / (BxB) -> dxd
+            # update of the least squares estimate 
+            self.thetaLS = torch.matmul(self.DesignInv,self.Vector) # d
+            self.t+=1
