@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.7 (atari)" project-jdk-type="Python SDK" />
+  <component name="UnattendedHostPersistenceState">
+    <option name="openedFilesInfos">
+      <list>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="0" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/README.md" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="5080" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/main.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="11493" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/../miniconda3/envs/atari/lib/python3.7/multiprocessing/connection.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="5922" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/a2c_ppo_acktr/envs.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="5523" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/../miniconda3/envs/atari/lib/python3.7/site-packages/stable_baselines3/common/vec_env/subproc_vec_env.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="2355" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/../miniconda3/envs/atari/lib/python3.7/site-packages/stable_baselines3/common/vec_env/base_vec_env.py" />
+        </OpenedFileInfo>
+        <OpenedFileInfo>
+          <option name="caretOffset" value="726" />
+          <option name="fileUrl" value="file://$PROJECT_DIR$/a2c_ppo_acktr/atari_wrappers.py" />
+        </OpenedFileInfo>
+      </list>
+    </option>
+  </component>
+</project>

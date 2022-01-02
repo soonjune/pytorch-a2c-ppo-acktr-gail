@@ -2,11 +2,21 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 
 from a2c_ppo_acktr.distributions import Bernoulli, Categorical, DiagGaussian
 from a2c_ppo_acktr.utils import init
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def tt(ts):
+    """
+    Helper Function to cast observation to correct type/device
+    """
+    if device.type == "cuda":
+        return Variable(ts.float().cuda(), requires_grad=False)
+    else:
+        return Variable(ts.float(), requires_grad=False)
 
 class Flatten(nn.Module):
     def forward(self, x):
@@ -227,6 +237,149 @@ class MLPBase(NNBase):
         hidden_actor = self.actor(x)
 
         return self.critic_linear(hidden_critic), hidden_actor, rnn_hxs
+
+
+class NatureTQN(nn.Module):
+    """
+    Network to learn the skip behaviour using the same architecture as the original DQN but with additional context.
+    The context is expected to be the chosen behaviour action on which the skip-Q is conditioned.
+    This Q function is expected to be used solely to learn the skip-Q function
+    """
+
+    def __init__(self, env, in_channels=4, num_actions=10, skip_dim=18):
+        """
+        :param in_channels: number of channel of input. (how many stacked images are used)
+        :param num_actions: action values
+        """
+        super(NatureTQN, self).__init__()
+        if env.observation_space.shape[-1] == 84:  # hack
+            self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
+        elif env.observation_space.shape[-1] == 42:  # hack
+            self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=4, stride=2)
+        else:
+            raise ValueError("Check state space dimensionality. Expected nx42x42 or nx84x84. Was:",
+                             env.observation_space.shape)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+
+        self.skip = nn.Linear(1, num_actions)  # Context layer
+
+        self.fc4 = nn.Linear(7 * 7 * 64 + num_actions, 512)  # Combination layer
+        self.fc5 = nn.Linear(512, skip_dim)  # Output
+
+        self.num_envs = env.num_envs
+
+    def forward(self, x, action_val=None):
+        # Process input image
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+
+        # Process behaviour context
+        x_ = F.relu(self.skip(action_val))
+
+        # Combine both streams
+        x = F.relu(self.fc4(
+            torch.cat([x.reshape(self.num_envs, -1), x_], 1)))  # This layer concatenates the context and CNN part
+        return self.fc5(x)
+
+class TempoRLPolicy(nn.Module):
+    def __init__(self, env, obs_shape, action_space, base=None, base_kwargs=None, skip_dim=30):
+        super(TempoRLPolicy, self).__init__()
+        if base_kwargs is None:
+            base_kwargs = {}
+        if base is None:
+            if len(obs_shape) == 3:
+                base = CNNBase
+            elif len(obs_shape) == 1:
+                base = MLPBase
+            else:
+                raise NotImplementedError
+
+        self.base = base(obs_shape[0], **base_kwargs)
+
+        if action_space.__class__.__name__ == "Discrete":
+            self.num_outputs = action_space.n
+            self.dist = Categorical(self.base.output_size, self.num_outputs)
+            self.skip_Q = NatureTQN(env, 4, num_actions=self.num_outputs, skip_dim=skip_dim)
+        elif action_space.__class__.__name__ == "Box":
+            self.num_outputs = action_space.shape[0]
+            self.dist = DiagGaussian(self.base.output_size, self.num_outputs)
+            self.skip_Q = NatureTQN(env, 4, num_actions=self.num_outputs, skip_dim=skip_dim)
+        elif action_space.__class__.__name__ == "MultiBinary":
+            self.num_outputs = action_space.shape[0]
+            self.dist = Bernoulli(self.base.output_size, self.num_outputs)
+            self.skip_Q = NatureTQN(env, 4, num_actions=self.num_outputs, skip_dim=skip_dim)
+        else:
+            raise NotImplementedError
+        
+        self.skip_optimizer = torch.optim.Adam(self.skip_Q.parameters())
+
+    @property
+    def is_recurrent(self):
+        return self.base.is_recurrent
+
+    @property
+    def recurrent_hidden_state_size(self):
+        """Size of rnn_hx."""
+        return self.base.recurrent_hidden_state_size
+
+    def forward(self, inputs, rnn_hxs, masks):
+        raise NotImplementedError
+
+    def act(self, inputs, rnn_hxs, masks, deterministic=False):
+        value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
+        dist = self.dist(actor_features)
+
+        if deterministic:
+            action = dist.mode()
+        else:
+            action = dist.sample()
+
+        action_log_probs = dist.log_probs(action)
+        dist_entropy = dist.entropy().mean()
+
+        return value, action, action_log_probs, rnn_hxs
+    
+    def get_skip(self, states, actions):
+        return self.skip_Q(tt(states), tt(actions)).cpu().detach().numpy()
+
+    def train_skip(self, replay_buffer, batch_size=100):
+        """
+        Train the skip network
+        """
+        # Sample replay buffer
+        state, action, skip, next_state, reward, not_done = replay_buffer.sample(batch_size)
+
+        # Compute the target Q value
+        target_Q = self.critic_target(next_state, self.actor_target(next_state))
+        target_Q = reward + (not_done * np.power(self.discount, skip + 1) * target_Q).detach()
+
+        # Get current Q estimate
+        current_Q = self.skip_Q(torch.cat([state, action], 1)).gather(1, skip.long())
+
+        # Compute critic loss
+        critic_loss = F.mse_loss(current_Q, target_Q)
+
+        # Optimize the critic
+        self.skip_optimizer.zero_grad()
+        critic_loss.backward()
+        self.skip_optimizer.step()
+
+
+    def get_value(self, inputs, rnn_hxs, masks):
+        value, _, _ = self.base(inputs, rnn_hxs, masks)
+        return value
+
+    def evaluate_actions(self, inputs, rnn_hxs, masks, action):
+        value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
+        dist = self.dist(actor_features)
+
+        action_log_probs = dist.log_probs(action)
+        dist_entropy = dist.entropy().mean()
+
+        return value, action_log_probs, dist_entropy, rnn_hxs
+    
 
 
 class BanditNet(nn.Module):

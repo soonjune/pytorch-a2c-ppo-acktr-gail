@@ -1,3 +1,4 @@
+from os import stat_result
 import torch
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
@@ -200,3 +201,54 @@ class RolloutStorage(object):
 
             yield obs_batch, recurrent_hidden_states_batch, actions_batch, \
                 value_preds_batch, return_batch, masks_batch, old_action_log_probs_batch, adv_targ
+
+# class ActionRepeatReplayBuffer(object):
+#     def __init__(self, num_processes, obs_shape, action_space, rep_dim, max_size=int(1e6)):
+#         self.max_size = max_size
+#         self.ptr = 0
+#         self.size = 0
+
+#         if action_space.__class__.__name__ == "Discrete":
+#             action_dim = 1
+#         elif action_space.__class__.__name__ == "Box":
+#             action_dim = action_space.shape[0]
+#         elif action_space.__class__.__name__ == "MultiBinary":
+#             action_dim = action_space.shape[0]
+#         else:
+#             raise NotImplementedError
+
+#         print("state_dim: ", *obs_shape)
+#         self.state = torch.zeros(max_size, num_processes,  *obs_shape)
+#         self.action = torch.zeros(max_size, num_processes, action_dim)
+#         self.rep = torch.zeros(max_size, num_processes, rep_dim)
+#         self.next_state = torch.zeros(max_size, num_processes, *obs_shape)
+#         self.reward = torch.zeros(max_size, num_processes, 1)
+#         self.not_done = torch.zeros(max_size, num_processes, 1)
+
+#         if action_space.__class__.__name__ == 'Discrete':
+#             self.action = self.action.long()
+
+#         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+#     def add(self, states, actions, reps, next_states, rewards, dones):
+#         self.state[self.ptr].copy_(states)
+#         self.action[self.ptr].copy_(actions)
+#         self.rep[self.ptr].copy_(reps)
+#         self.next_state[self.ptr]._(next_states)
+#         self.reward[self.ptr].copy_(rewards)
+#         self.not_done[self.ptr].copy_(1. - dones)
+
+#         self.ptr = (self.ptr + 1) % self.max_size
+#         self.size = min(self.size + 1, self.max_size)
+
+#     def sample(self, batch_size):
+#         ind = torch.random.randint(0, self.size, size=batch_size)
+
+#         return (
+#             torch.FloatTensor(self.state[ind]).to(self.device),
+#             torch.FloatTensor(self.action[ind]).to(self.device),
+#             torch.FloatTensor(self.rep[ind]).to(self.device),
+#             torch.FloatTensor(self.next_state[ind]).to(self.device),
+#             torch.FloatTensor(self.reward[ind]).to(self.device),
+#             torch.FloatTensor(self.not_done[ind]).to(self.device)
+#         )

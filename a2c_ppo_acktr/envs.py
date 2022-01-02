@@ -10,6 +10,8 @@ from stable_baselines3.common.atari_wrappers import (ClipRewardEnv,
                                                      FireResetEnv,
                                                      MaxAndSkipEnv,
                                                      NoopResetEnv, WarpFrame)
+from .atari_wrappers import TempoRLSkipEnv
+# from .monitor import RepeatMonitor
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import (DummyVecEnv, SubprocVecEnv,
                                               VecEnvWrapper)
@@ -32,7 +34,7 @@ except ImportError:
     pass
 
 
-def make_env(env_id, seed, rank, log_dir, allow_early_resets):
+def make_env(env_id, seed, rank, log_dir, allow_early_resets, action_repeat):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
@@ -45,7 +47,11 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets):
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
         if is_atari:
             env = NoopResetEnv(env, noop_max=30)
+        if action_repeat:
+            env = TempoRLSkipEnv(env, skip=4)
+        else:
             env = MaxAndSkipEnv(env, skip=4)
+
 
         env.seed(seed + rank)
 
@@ -54,9 +60,13 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets):
 
         if log_dir is not None:
             env = Monitor(env,
-                          os.path.join(log_dir, str(rank)),
-                          allow_early_resets=allow_early_resets)
-
+                        os.path.join(log_dir, str(rank)),
+                        allow_early_resets=allow_early_resets)
+            # else:
+            #     env = RepeatMonitor(env,
+            #                 os.path.join(log_dir, str(rank)),
+            #                 allow_early_resets=allow_early_resets)
+            
         if is_atari:
             if len(env.observation_space.shape) == 3:
                 env = EpisodicLifeEnv(env)
@@ -87,9 +97,10 @@ def make_vec_envs(env_name,
                   log_dir,
                   device,
                   allow_early_resets,
-                  num_frame_stack=None):
+                  num_frame_stack=None,
+                  action_repeat=False):
     envs = [
-        make_env(env_name, seed, i, log_dir, allow_early_resets)
+        make_env(env_name, seed, i, log_dir, allow_early_resets, action_repeat)
         for i in range(num_processes)
     ]
 

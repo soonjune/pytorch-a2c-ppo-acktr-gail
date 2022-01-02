@@ -150,6 +150,24 @@ def get_args():
         default=False,
         help='use a linear schedule on the learning rate')
 
+    ## for TempoRL
+    parser.add_argument(
+        '--max-skip-dim',
+        action='store_true',
+        default=30,
+        help='maximum skip length (skip_dim) for TempoRL')
+    parser.add_argument(
+        "--expl-noise", 
+        default=0.1,
+        help='epsilon for skip policy')  # Std of Gaussian exploration noise
+    parser.add_argument(
+        '--tempo-batch-size',
+        type=int,
+        default=256,
+        help='tempoRL batch size (default: 256)')
+
+
+
     ## for bandit
     parser.add_argument(
         '--nbArms',
@@ -164,9 +182,9 @@ def get_args():
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    assert args.algo in ['a2c', 'ppo', 'acktr', 'b_a2c']
+    assert args.algo in ['a2c', 'ppo', 'acktr', 'b_a2c', 'tempo_a2c']
     if args.recurrent_policy:
-        assert args.algo in ['a2c', 'ppo', 'b_a2c'], \
+        assert args.algo in ['a2c', 'ppo', 'b_a2c', 'tempo_a2c'], \
             'Recurrent policy is not implemented for ACKTR'
 
     return args

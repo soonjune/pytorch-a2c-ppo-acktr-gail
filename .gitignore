@@ -104,3 +104,5 @@ trained_models/
 .fuse_hidden*
 
 experiments/
+
+/nohup.out
