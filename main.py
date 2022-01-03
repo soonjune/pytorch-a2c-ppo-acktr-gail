@@ -198,9 +198,9 @@ def main():
                         repeat = np.argmax(actor_critic.get_skip(obs, action), axis=1)
                         # t += repeat
                     if repeats is not None: # previous repeat exists
-                        finisehd_repeat = repeats < 0
-                        repeats = np.array([repeat[i] if finished else repeats[i] for finished in finisehd_repeat])
-                        act_continue = torch.tensor([action[i] if finished else act_continue[i] for finished in finisehd_repeat]).to(device)
+                        finisehd_repeat = repeats < 0                            
+                        repeats = np.array([repeat[idx] if finished else repeats[idx] for idx, finished in enumerate(finisehd_repeat)])
+                        act_continue = torch.tensor([action[idx] if finished else act_continue[idx] for idx, finished in enumerate(finisehd_repeat)]).reshape(-1,1).to(device)
                     else:
                         act_continue = action
                         repeats = repeat
@@ -231,7 +231,7 @@ def main():
                             skip_reward += np.power(args.gamma, exp) * r
                         skip_rollouts.add_transition(start_state.cpu().numpy(), curr_skip[k] - skip_id, obs[k].cpu().numpy(), 
                                                      skip_reward.cpu().numpy(), done[i], curr_skip[i] - skip_id + 1,
-                                                     action.cpu().numpy()[k])
+                                                     act_continue.cpu().numpy()[k])
                 for info in infos:
                     if 'episode' in info.keys():
                         episode_rewards.append(info['episode']['r'])
@@ -243,7 +243,7 @@ def main():
                     [[0.0] if 'bad_transition' in info.keys() else [1.0]
                     for info in infos])
                 # Insert repeated rollout trajectories
-                rollouts.insert(obs, recurrent_hidden_states, action,
+                rollouts.insert(obs, recurrent_hidden_states, act_continue,
                                 action_log_prob, value, reward, masks, bad_masks)
                 # Update the skip buffer with all observed transitions in the local connectedness graph
       
