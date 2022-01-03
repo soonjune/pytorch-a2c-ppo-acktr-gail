@@ -154,7 +154,7 @@ def get_args():
     parser.add_argument(
         '--max-skip-dim',
         action='store_true',
-        default=30,
+        default=5,
         help='maximum skip length (skip_dim) for TempoRL')
     parser.add_argument(
         "--expl-noise", 

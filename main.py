@@ -156,6 +156,7 @@ def main():
     rollouts.to(device)
 
     episode_rewards = deque(maxlen=10)
+    skip_l = []
 
     start = time.time()
     num_updates = int(
@@ -163,7 +164,7 @@ def main():
 
     log_file = open(log_file_name,'a', newline='')
     log_file_wr = csv.writer(log_file)
-    log_file_wr.writerow(['Updates', 'total_num_steps', 'Last 10 mean_episode_rewards'])
+    log_file_wr.writerow(['Updates', 'total_num_steps', 'Last 10 mean_episode_rewards', 'Avg_skips'])
     for j in range(num_updates):
 
         if args.use_linear_lr_decay:
@@ -181,6 +182,7 @@ def main():
         for i in range(envs.num_envs): # initialize dict
             skip_graphs[i] = {'skip_states': [], 'skip_rewards': []}# only used for TempoRL to build the local conectedness graph
         repeats = None
+        act_continue = None
         for step in range(args.num_steps):
             # Sample actions
             with torch.no_grad():
@@ -198,8 +200,11 @@ def main():
                     if repeats is not None: # previous repeat exists
                         finisehd_repeat = repeats < 0
                         repeats = np.array([repeat[i] if finished else repeats[i] for finished in finisehd_repeat])
+                        act_continue = torch.tensor([action[i] if finished else act_continue[i] for finished in finisehd_repeat]).to(device)
                     else:
+                        act_continue = action
                         repeats = repeat
+                        skip_l.append(np.mean(repeats))
                 if args.algo == 'b_a2c':
                     skips = bandit.get_skip(rollouts.obs[step], rollouts.recurrent_hidden_states[step],
                     rollouts.masks[step], action, args.num_processes)
@@ -209,7 +214,7 @@ def main():
                 prev_obs = obs
                 # aug_action = torch.cat((action, torch.from_numpy(repeat.reshape(-1,1)).to(device)), dim=1)
                 # Perform action
-                obs, reward, done, infos = envs.step(action)
+                obs, reward, done, infos = envs.step(act_continue)
                 repeats -= 1
                 for i in range(envs.num_envs):
                     skip_graphs[i]['skip_states'].append(prev_obs[i][:])
@@ -251,6 +256,7 @@ def main():
                     if 'episode' in info.keys():
                         episode_rewards.append(info['episode']['r'])
 
+
                 # If done then clean the history of observations.
                 masks = torch.FloatTensor(
                     [[0.0] if done_ else [1.0] for done_ in done])
@@ -287,23 +293,15 @@ def main():
             batch_states, batch_actions, batch_next_states, batch_rewards,\
                 batch_terminal_flags, batch_lengths, batch_behaviours = \
                 skip_rollouts.random_next_batch(args.tempo_batch_size)
-            print("rw: ", batch_terminal_flags.shape)
-            print("target: ",((1 - batch_terminal_flags) * torch.pow(batch_lengths, args.gamma)).shape)
-            print("exponent:", (torch.pow(batch_lengths, args.gamma)).shape)
-            print("ac value: ", actor_critic.get_value(batch_next_states, False, None)[torch.arange(args.tempo_batch_size).long(), torch.argmax(
-                            actor_critic.get_value(batch_next_states, False, None), dim=1)])
-            
-            target = batch_rewards + (1 - batch_terminal_flags) * torch.pow(batch_lengths, args.gamma)  * \
+            target = batch_rewards.squeeze() + (1 - batch_terminal_flags) * torch.pow(batch_lengths, args.gamma)  * \
                         actor_critic.get_value(batch_next_states, False, None)[torch.arange(args.tempo_batch_size).long(), torch.argmax(
                             actor_critic.get_value(batch_next_states, False, None), dim=1)]
-            print(target.shape)
             current_prediction = actor_critic.skip_Q(batch_states, batch_behaviours)[
                         torch.arange(args.tempo_batch_size).long(), batch_actions.long()]
-            print(current_prediction)
             
             loss = actor_critic.skip_loss_function(current_prediction, target.detach())
             loss.backward()
-            actor_critic.skip_q_optimizer.step()
+            actor_critic.skip_optimizer.step()
 
     
         rollouts.compute_returns(next_value, args.use_gae, args.gamma,
@@ -341,7 +339,7 @@ def main():
                         action_loss))
             log_file = open(log_file_name,'a', newline='')
             log_file_wr = csv.writer(log_file)
-            log_file_wr.writerow([j, total_num_steps, np.round(np.mean(episode_rewards),1)])
+            log_file_wr.writerow([j, total_num_steps, np.round(np.mean(episode_rewards), 1), np.round(np.mean(skip_l), 1)])
             log_file.close()
 
         if (args.eval_interval is not None and len(episode_rewards) > 1
