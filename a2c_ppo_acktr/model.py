@@ -250,7 +250,7 @@ class Bandit_Policy(Policy):
     def __init__(self, obs_shape, action_space, nbArms, bandit_dim, base=None, reg=10, sigma=0.5, nu=0.5, base_kwargs=None):  # test 2.reg 1->10
         super(Bandit_Policy, self).__init__(obs_shape, action_space, base=base, base_kwargs=base_kwargs)
         self.reg = reg
-        self.nu = 2.0
+        self.nu = nu
         self.sigma = sigma
         self.nbArms = nbArms
         self.context_dim = self.base.hidden_size + self.num_outputs + nbArms #context dim = |S|+|A|+|K| 521

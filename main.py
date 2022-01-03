@@ -141,6 +141,7 @@ def main():
     log_file_wr.writerow(['Updates', 'total_num_steps', 'Last 10 mean_episode_rewards', 'Avg_skips'])
     for j in range(num_updates):
         skips_l = []
+        decision_count = 0
         if args.use_linear_lr_decay:
             # decrease learning rate linearly
             utils.update_linear_schedule(
@@ -197,6 +198,7 @@ def main():
                 skips = masks.squeeze().numpy()*(skips-1)
                 zero_idx = np.where(skips==0)[0]
                 for idx in zero_idx:
+                    decision_count+=1
                     skip_replay_buffer.add_transition(start_obs[idx], action[idx], obs[idx],\
                         recurrent_hidden_states[idx], reward[idx], masks[idx], arms[idx]) 
 
@@ -232,7 +234,7 @@ def main():
         if args.algo == 'b_a2c': 
             # Update Bandit
             batch_skip_obs, batch_skip_actions, batch_skip_next_obs, batch_recurrent_hidden_states, _, \
-            batch_masks, batch_skip_arms = skip_replay_buffer.random_next_batch(64)
+            batch_masks, batch_skip_arms = skip_replay_buffer.recent_batch_sample(decision_count)
             # reward 포함
             '''target_rewards = batch_rewards + batch_masks.detach().to(device) * self._gamma * \
                         torch.max(self._q(batch_next_states), dim=1)[0]'''
@@ -242,7 +244,7 @@ def main():
                     batch_masks).detach()
 
             agent.bandit_train(batch_skip_obs, batch_skip_actions, batch_recurrent_hidden_states, batch_masks,\
-                    batch_skip_arms, target_rewards, 64)       
+                    batch_skip_arms, target_rewards, decision_count)       
 
         # save for every interval-th episode or for the last epoch
         if (j % args.save_interval == 0
