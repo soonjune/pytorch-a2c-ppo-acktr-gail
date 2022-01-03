@@ -313,3 +313,4 @@ class NoneConcatSkipReplayBuffer:
         batch_behavoiurs = np.array([self._data.behaviour_action[i] for i in batch_indices])
         return tt(batch_states), tt(batch_actions), tt(batch_next_states),\
                tt(batch_rewards), tt(batch_terminal_flags), tt(batch_lengths), tt(batch_behavoiurs)
+

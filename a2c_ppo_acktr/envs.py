@@ -5,13 +5,11 @@ import numpy as np
 import torch
 from gym.spaces.box import Box
 from gym.wrappers.clip_action import ClipAction
-from stable_baselines3.common.atari_wrappers import (ClipRewardEnv,
-                                                     EpisodicLifeEnv,
-                                                     FireResetEnv,
-                                                     MaxAndSkipEnv,
-                                                     NoopResetEnv)
-from .atari_wrappers import (TempoRLSkipEnv, WarpFrame)
-# from .monitor import RepeatMonitor
+from .atari_wrappers import (ClipRewardEnv,
+                            EpisodicLifeEnv,
+                            FireResetEnv,
+                            MaxAndSkipEnv,
+                            NoopResetEnv, WarpFrame)
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import (DummyVecEnv, SubprocVecEnv,
                                               VecEnvWrapper)
@@ -34,7 +32,7 @@ except ImportError:
     pass
 
 
-def make_env(env_id, seed, rank, log_dir, allow_early_resets, action_repeat):
+def make_env(env_id, seed, rank, log_dir, allow_early_resets):
     def _thunk():
         if env_id.startswith("dm"):
             _, domain, task = env_id.split('.')
@@ -47,11 +45,7 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, action_repeat):
             env.unwrapped, gym.envs.atari.atari_env.AtariEnv)
         if is_atari:
             env = NoopResetEnv(env, noop_max=30)
-        if action_repeat:
-            env = TempoRLSkipEnv(env, skip=4, width=84, height=84, grayscale=True, dict_space_key=None)
-        else:
             env = MaxAndSkipEnv(env, skip=4)
-
 
         env.seed(seed + rank)
 
@@ -60,13 +54,9 @@ def make_env(env_id, seed, rank, log_dir, allow_early_resets, action_repeat):
 
         if log_dir is not None:
             env = Monitor(env,
-                        os.path.join(log_dir, str(rank)),
-                        allow_early_resets=allow_early_resets)
-            # else:
-            #     env = RepeatMonitor(env,
-            #                 os.path.join(log_dir, str(rank)),
-            #                 allow_early_resets=allow_early_resets)
-            
+                          os.path.join(log_dir, str(rank)),
+                          allow_early_resets=allow_early_resets)
+
         if is_atari:
             if len(env.observation_space.shape) == 3:
                 env = EpisodicLifeEnv(env)
@@ -100,7 +90,7 @@ def make_vec_envs(env_name,
                   num_frame_stack=None,
                   action_repeat=False):
     envs = [
-        make_env(env_name, seed, i, log_dir, allow_early_resets, action_repeat)
+        make_env(env_name, seed, i, log_dir, allow_early_resets)
         for i in range(num_processes)
     ]
 
@@ -254,7 +244,7 @@ class VecPyTorchFrameStack(VecEnvWrapper):
         for (i, new) in enumerate(news):
             if new:
                 self.stacked_obs[i] = 0
-        self.stacked_obs[:, -self.shape_dim0:] = obs        
+        self.stacked_obs[:, -self.shape_dim0:] = obs
         return self.stacked_obs, rews, news, infos
 
     def reset(self):

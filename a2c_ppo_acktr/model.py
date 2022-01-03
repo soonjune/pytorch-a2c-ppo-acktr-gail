@@ -279,8 +279,9 @@ class NatureTQN(nn.Module):
         x_ = F.relu(self.skip(action_val))
 
         # Combine both streams
+        print(x.shape, x_.shape)
         x = F.relu(self.fc4(
-            torch.cat([x.reshape(self.num_envs, -1), x_], 1)))  # This layer concatenates the context and CNN part
+            torch.cat([x.reshape(x.size(0), -1), x_], 1)))  # This layer concatenates the context and CNN part
         return self.fc5(x)
 
 class TempoRLPolicy(nn.Module):
@@ -313,6 +314,7 @@ class TempoRLPolicy(nn.Module):
         else:
             raise NotImplementedError
         
+        self.skip_loss_function = nn.SmoothL1Loss()
         self.skip_optimizer = torch.optim.Adam(self.skip_Q.parameters())
 
     @property

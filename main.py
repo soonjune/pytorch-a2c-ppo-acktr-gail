@@ -176,6 +176,11 @@ def main():
             expl_noise = initial_expl_noise - (initial_expl_noise * (j / float(num_updates)))
 
         # t = np.zeros((envs.num_envs,))
+        curr_skip = [0 for _ in range(envs.num_envs)]
+        skip_graphs = dict()
+        for i in range(envs.num_envs): # initialize dict
+            skip_graphs[i] = {'skip_states': [], 'skip_rewards': []}# only used for TempoRL to build the local conectedness graph
+        repeats = None
         for step in range(args.num_steps):
             # Sample actions
             with torch.no_grad():
@@ -190,26 +195,38 @@ def main():
                         # print(obs.shape)
                         repeat = np.argmax(actor_critic.get_skip(obs, action), axis=1)
                         # t += repeat
+                    if repeats is not None: # previous repeat exists
+                        finisehd_repeat = repeats < 0
+                        repeats = np.array([repeat[i] if finished else repeats[i] for finished in finisehd_repeat])
+                    else:
+                        repeats = repeat
                 if args.algo == 'b_a2c':
                     skips = bandit.get_skip(rollouts.obs[step], rollouts.recurrent_hidden_states[step],
                     rollouts.masks[step], action, args.num_processes)
 
             # Obser reward and next obs
             if args.algo == 'tempo_a2c':
-                # Perform action
-                skip_states, skip_rewards = [], []  # only used for TempoRL to build the local conectedness graph
                 prev_obs = obs
-                aug_action = torch.cat((action, torch.from_numpy(repeat.reshape(-1,1)).to(device)), dim=1)
-                obs, reward, done, infos = envs.step(aug_action)
+                # aug_action = torch.cat((action, torch.from_numpy(repeat.reshape(-1,1)).to(device)), dim=1)
+                # Perform action
+                obs, reward, done, infos = envs.step(action)
+                repeats -= 1
+                for i in range(envs.num_envs):
+                    skip_graphs[i]['skip_states'].append(prev_obs[i][:])
+                    skip_graphs[i]['skip_rewards'].append(reward[i][:])
+
                 # print(obs.shape)
                 # print(reward, reward.shape)
                 # Update the skip replay buffer with all observed skips.
-                for info in infos:
-                    for ss, r, ns, sr, d, l, b in zip(info['start_states'], info['repeats'], info['new_states'], 
-                                                    info['discounted_skip_rewards'], info['dones'], info['lengths'], info['behaviours']):
-                        # print(ns.shape)
-                        skip_rollouts.add_transition(ss, r, ns, sr, d, l, b)
-
+                for k in skip_graphs.keys():
+                    skip_id = 0
+                    for start_state in skip_graphs[k]['skip_states']:
+                        skip_reward = 0
+                        for exp, r in enumerate(skip_graphs[k]['skip_rewards'][skip_id:]):
+                            skip_reward += np.power(args.gamma, exp) * r
+                        skip_rollouts.add_transition(start_state.cpu().numpy(), curr_skip[k] - skip_id, obs[k].cpu().numpy(), 
+                                                     skip_reward.cpu().numpy(), done[i], curr_skip[i] - skip_id + 1,
+                                                     action.cpu().numpy()[k])
                 for info in infos:
                     if 'episode' in info.keys():
                         episode_rewards.append(info['episode']['r'])
@@ -270,11 +287,16 @@ def main():
             batch_states, batch_actions, batch_next_states, batch_rewards,\
                 batch_terminal_flags, batch_lengths, batch_behaviours = \
                 skip_rollouts.random_next_batch(args.tempo_batch_size)
-            # print(batch_next_states.shape)
+            print("rw: ", batch_terminal_flags.shape)
+            print("target: ",((1 - batch_terminal_flags) * torch.pow(batch_lengths, args.gamma)).shape)
+            print("exponent:", (torch.pow(batch_lengths, args.gamma)).shape)
+            print("ac value: ", actor_critic.get_value(batch_next_states, False, None)[torch.arange(args.tempo_batch_size).long(), torch.argmax(
+                            actor_critic.get_value(batch_next_states, False, None), dim=1)])
             
-            target = batch_rewards + (1 - batch_terminal_flags) * torch.pow(batch_lengths, args.gamma) * \
+            target = batch_rewards + (1 - batch_terminal_flags) * torch.pow(batch_lengths, args.gamma)  * \
                         actor_critic.get_value(batch_next_states, False, None)[torch.arange(args.tempo_batch_size).long(), torch.argmax(
                             actor_critic.get_value(batch_next_states, False, None), dim=1)]
+            print(target.shape)
             current_prediction = actor_critic.skip_Q(batch_states, batch_behaviours)[
                         torch.arange(args.tempo_batch_size).long(), batch_actions.long()]
             print(current_prediction)
