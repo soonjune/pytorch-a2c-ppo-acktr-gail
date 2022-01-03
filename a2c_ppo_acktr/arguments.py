@@ -158,7 +158,7 @@ def get_args():
         help='maximum skip length (skip_dim) for TempoRL')
     parser.add_argument(
         "--expl-noise", 
-        default=0.01,
+        default=1.,
         help='epsilon for skip policy')  # Std of Gaussian exploration noise
     parser.add_argument(
         '--tempo-batch-size',

@@ -149,6 +149,7 @@ def main():
         skip_rollouts = NoneConcatSkipReplayBuffer(5e4)
         # the skip policy uses epsilon greedy exploration for learning
         initial_expl_noise = args.expl_noise
+        expl_noise = initial_expl_noise
 
 
     obs = envs.reset()
@@ -172,9 +173,6 @@ def main():
             utils.update_linear_schedule(
                 agent.optimizer, j, num_updates,
                 agent.optimizer.lr if args.algo == "acktr" else args.lr)
-        # implement epsilon decay for tempoRL extension
-        if args.algo == 'tempo_a2c':
-            expl_noise = initial_expl_noise - (initial_expl_noise * (j / float(num_updates)))
 
         # t = np.zeros((envs.num_envs,))
         curr_skip = np.array([0 for _ in range(envs.num_envs)])
@@ -336,6 +334,10 @@ def main():
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
 
             total_num_steps = (j + 1) * args.num_processes * args.num_steps
+            # epsilon decay
+            if args.algo == 'tempo_a2c':
+                expl_noise = max(0.01, initial_expl_noise - (initial_expl_noise * (total_num_steps/200000)))
+
             end = time.time()
             print(f"mediean extension: {np.median(skip_l)}, min/max extension: {np.min(skip_l)}/{np.max(skip_l)}")
             print("Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n"\
