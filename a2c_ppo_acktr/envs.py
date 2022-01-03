@@ -233,7 +233,6 @@ class VecPyTorchFrameStack(VecEnvWrapper):
 
         wos = venv.observation_space  # wrapped ob space
         self.shape_dim0 = wos.shape[0]
-        print(wos.low.shape)
 
         low = np.repeat(wos.low, self.nstack, axis=0)
         high = np.repeat(wos.high, self.nstack, axis=0)

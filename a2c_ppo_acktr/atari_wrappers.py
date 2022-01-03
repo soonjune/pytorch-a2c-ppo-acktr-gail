@@ -133,6 +133,7 @@ class TempoRLSkipEnv(gym.Wrapper):
         # most recent raw observations (for max pooling across time steps)
         self._obs_buffer = np.zeros((2,)+env.observation_space.shape, dtype=np.uint8)
         self._skip       = skip
+        self._obs_space = env.observation_space
 
 
     def step(self, aug_action):
@@ -175,9 +176,8 @@ class TempoRLSkipEnv(gym.Wrapper):
                 obs, (84, 84), interpolation=cv2.INTER_AREA
             )
             obs = np.expand_dims(obs, -1)
-            low = np.repeat(env.observation_space.low, 4, axis=0)
-            self.stacked_obs = torch.zeros((16, ) + low.shape).to(device)
-
+            self.shape_dim0 = obs.shape[0]
+            self.stacked_obs = np.zeros(obs.shape)
 
             for curr_skip in range(repeat + 1):
                 curr_skip_reward = 0
@@ -219,7 +219,7 @@ class TempoRLSkipEnv(gym.Wrapper):
 
                     if done:
                         break
-
+                    
                     obs = new_obs
                     plain_ns.append(obs)
                 
