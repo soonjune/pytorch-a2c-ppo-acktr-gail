@@ -177,7 +177,7 @@ def main():
             expl_noise = initial_expl_noise - (initial_expl_noise * (j / float(num_updates)))
 
         # t = np.zeros((envs.num_envs,))
-        curr_skip = [0 for _ in range(envs.num_envs)]
+        curr_skip = np.array([0 for _ in range(envs.num_envs)])
         skip_graphs = dict()
         for i in range(envs.num_envs): # initialize dict
             skip_graphs[i] = {'skip_states': [], 'skip_rewards': []}# only used for TempoRL to build the local conectedness graph
@@ -198,9 +198,15 @@ def main():
                         repeat = np.argmax(actor_critic.get_skip(obs, action), axis=1)
                         # t += repeat
                     if repeats is not None: # previous repeat exists
-                        finisehd_repeat = repeats < 0                            
-                        repeats = np.array([repeat[idx] if finished else repeats[idx] for idx, finished in enumerate(finisehd_repeat)])
-                        act_continue = torch.tensor([action[idx] if finished else act_continue[idx] for idx, finished in enumerate(finisehd_repeat)]).reshape(-1,1).to(device)
+                        finisehd_repeat = repeats < 0
+                        curr_skip += 1
+                        for idx, finished in enumerate(finisehd_repeat):
+                            if finished:
+                                curr_skip[idx] = 0
+                                repeats[idx] = repeat[idx]
+                                act_continue[idx] = action[idx]
+                            # repeats = np.array([repeat[idx] if finished else repeats[idx] for idx, finished in enumerate(finisehd_repeat)])
+                            # act_continue = torch.tensor([action[idx] if finished else act_continue[idx] for idx, finished in enumerate(finisehd_repeat)]).reshape(-1,1).to(device)
                     else:
                         act_continue = action
                         repeats = repeat
@@ -212,6 +218,7 @@ def main():
             # Obser reward and next obs
             if args.algo == 'tempo_a2c':
                 prev_obs = obs
+                # print(torch.eq(act_continue, action)) # for sanity check
                 # aug_action = torch.cat((action, torch.from_numpy(repeat.reshape(-1,1)).to(device)), dim=1)
                 # Perform action
                 obs, reward, done, infos = envs.step(act_continue)
@@ -230,7 +237,7 @@ def main():
                         for exp, r in enumerate(skip_graphs[k]['skip_rewards'][skip_id:]):
                             skip_reward += np.power(args.gamma, exp) * r
                         skip_rollouts.add_transition(start_state.cpu().numpy(), curr_skip[k] - skip_id, obs[k].cpu().numpy(), 
-                                                     skip_reward.cpu().numpy(), done[i], curr_skip[i] - skip_id + 1,
+                                                     skip_reward.cpu().numpy(), done[k], curr_skip[k] - skip_id + 1,
                                                      act_continue.cpu().numpy()[k])
                 for info in infos:
                     if 'episode' in info.keys():
@@ -330,6 +337,7 @@ def main():
 
             total_num_steps = (j + 1) * args.num_processes * args.num_steps
             end = time.time()
+            print(f"mediean extension: {np.median(skip_l)}, min/max extension: {np.min(skip_l)}/{np.max(skip_l)}")
             print("Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n"\
                 .format(j, total_num_steps,
                         int(total_num_steps / (end - start)),
@@ -339,7 +347,7 @@ def main():
                         action_loss))
             log_file = open(log_file_name,'a', newline='')
             log_file_wr = csv.writer(log_file)
-            log_file_wr.writerow([j, total_num_steps, np.round(np.mean(episode_rewards), 1), np.round(np.mean(skip_l), 1)])
+            log_file_wr.writerow([j, total_num_steps, np.round(np.mean(episode_rewards), 1), np.round(np.mean(skip_l)+1, 1)])
             log_file.close()
 
         if (args.eval_interval is not None and len(episode_rewards) > 1
