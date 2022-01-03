@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import copy
 
 from a2c_ppo_acktr.distributions import Bernoulli, Categorical, DiagGaussian
 from a2c_ppo_acktr.utils import init
@@ -247,14 +248,15 @@ class BanditNet(nn.Module):
 
 
 class Bandit_Policy(Policy):
-    def __init__(self, obs_shape, action_space, nbArms, bandit_dim, base=None, reg=10, sigma=0.5, nu=0.5, base_kwargs=None):  # test 2.reg 1->10
+    def __init__(self, obs_shape, action_space, nbArms, bandit_dim, base=None, reg=10, sigma=0.5, nu=2.0, base_kwargs=None):  # test 2.reg 1->10
         super(Bandit_Policy, self).__init__(obs_shape, action_space, base=base, base_kwargs=base_kwargs)
         self.reg = reg
-        self.nu = 2.0
+        self.nu = nu
         self.sigma = sigma
         self.nbArms = nbArms
         self.context_dim = self.base.hidden_size + self.num_outputs + nbArms #context dim = |S|+|A|+|K| 521
         self.bandit_dim = bandit_dim # 30
+        self.Bandit_base = copy.deepcopy(self.base)
         self.Bandit_Net = BanditNet(self.context_dim, self.bandit_dim)
 
         self.clear()
@@ -274,9 +276,9 @@ class Bandit_Policy(Policy):
             self.thetaLS=torch.zeros((self.bandit_dim,1), device=device) # regularized least-squares estimate
     
     def get_skip(self, inputs, rnn_hxs, masks, action, num_processes, deterministic=False):
-        value, actor_features, rnn_hxs = self.base(inputs, rnn_hxs, masks)
+        value, actor_features, rnn_hxs = self.Bandit_base(inputs, rnn_hxs, masks)
 
-        state =  actor_features.float().detach() # 16xS
+        state =  actor_features.float() # 16xS
         action = F.one_hot(action.squeeze(), num_classes=self.num_outputs).float().reshape(num_processes, -1) # 16xA
         context = torch.cat((state ,action), dim=-1) # 16x(S+A)
         context = context.repeat(self.nbArms,1) # 16Kx(S+A)
@@ -296,8 +298,8 @@ class Bandit_Policy(Policy):
 
     def bandit_update(self, obs, actions, rnn_hxs, masks, extend_length, target_rewards, batch_size, b_optimizer):
         self.Bandit_Net.train()
-        with torch.no_grad():
-            value, actor_features, rnn_hxs = self.base(obs, rnn_hxs, masks)
+
+        value, actor_features, rnn_hxs = self.Bandit_base(obs, rnn_hxs, masks)
 
         states = actor_features.float().detach() # BxS
         extend_length = extend_length.view(-1, 1) # Bx1

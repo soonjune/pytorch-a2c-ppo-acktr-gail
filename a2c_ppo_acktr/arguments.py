@@ -153,7 +153,7 @@ def get_args():
     ## for bandit
     parser.add_argument(
         '--nbArms',
-        default=5,
+        default=3,
         help='max extend length')
     parser.add_argument(
         '--bandit-dim',

@@ -267,3 +267,15 @@ class SkipReplayBuffer:
         batch_lengths = np.array([self._data.lengths[i] for i in batch_indices])
         return batch_states, batch_actions, batch_next_states,\
                batch_recurrent_hidden_states, batch_rewards, batch_masks, tt_long(batch_lengths)
+
+    def recent_batch_sample(self, batch_size):
+        batch_indices = np.arange(-batch_size, 0, 1)
+        batch_states = torch.stack([self._data.states[i] for i in batch_indices])
+        batch_actions = torch.stack([self._data.actions[i] for i in batch_indices])
+        batch_next_states = torch.stack([self._data.next_states[i] for i in batch_indices])
+        batch_recurrent_hidden_states = torch.stack([self._data.recurrent_hidden_states[i] for i in batch_indices])
+        batch_rewards = torch.stack([self._data.rewards[i] for i in batch_indices])
+        batch_masks = torch.stack([self._data.masks[i] for i in batch_indices])
+        batch_lengths = np.array([self._data.lengths[i] for i in batch_indices])
+        return batch_states, batch_actions, batch_next_states,\
+               batch_recurrent_hidden_states, batch_rewards, batch_masks, tt_long(batch_lengths)

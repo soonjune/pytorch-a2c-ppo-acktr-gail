@@ -87,7 +87,7 @@ def main():
             bandit_dim,
             base_kwargs={'recurrent': args.recurrent_policy})
         bandit.to(device)
-        skip_replay_buffer = SkipReplayBuffer(80)
+        skip_replay_buffer = SkipReplayBuffer(1e6)
         agent = algo.Bandit_A2C_ACKTR(
             actor_critic,
             bandit,
@@ -141,12 +141,13 @@ def main():
     log_file_wr.writerow(['Updates', 'total_num_steps', 'Last 10 mean_episode_rewards', 'Avg_skips'])
     for j in range(num_updates):
         skips_l = []
+        skip_count = 0
         if args.use_linear_lr_decay:
             # decrease learning rate linearly
             utils.update_linear_schedule(
                 agent.optimizer, j, num_updates,
                 agent.optimizer.lr if args.algo == "acktr" else args.lr)
-        
+
         for step in range(args.num_steps):
             # Sample actions
             with torch.no_grad():
@@ -197,6 +198,7 @@ def main():
                 skips = masks.squeeze().numpy()*(skips-1)
                 zero_idx = np.where(skips==0)[0]
                 for idx in zero_idx:
+                    skip_count += 1
                     skip_replay_buffer.add_transition(start_obs[idx], action[idx], obs[idx],\
                         recurrent_hidden_states[idx], reward[idx], masks[idx], arms[idx]) 
 
@@ -232,7 +234,7 @@ def main():
         if args.algo == 'b_a2c': 
             # Update Bandit
             batch_skip_obs, batch_skip_actions, batch_skip_next_obs, batch_recurrent_hidden_states, _, \
-            batch_masks, batch_skip_arms = skip_replay_buffer.random_next_batch(64)
+            batch_masks, batch_skip_arms = skip_replay_buffer.recent_batch_sample(skip_count)
             # reward 포함
             '''target_rewards = batch_rewards + batch_masks.detach().to(device) * self._gamma * \
                         torch.max(self._q(batch_next_states), dim=1)[0]'''
