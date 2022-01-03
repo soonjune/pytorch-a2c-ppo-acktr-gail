@@ -163,7 +163,7 @@ def get_args():
     parser.add_argument(
         '--tempo-batch-size',
         type=int,
-        default=256,
+        default=64,
         help='tempoRL batch size (default: 256)')
 
 

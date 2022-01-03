@@ -7,6 +7,9 @@ import gym
 from gym import spaces
 import cv2
 cv2.ocl.setUseOpenCL(False)
+import torch
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 discount_rate = 0.99
 
@@ -124,12 +127,13 @@ class MaxAndSkipEnv(gym.Wrapper):
         return self.env.reset(**kwargs)
 
 class TempoRLSkipEnv(gym.Wrapper):
-    def __init__(self, env, skip=4):
+    def __init__(self, env, skip=4, width=84, height=84, grayscale=True, dict_space_key=None):
         """Return only every trajectory of repeated action"""
         gym.Wrapper.__init__(self, env)
         # most recent raw observations (for max pooling across time steps)
         self._obs_buffer = np.zeros((2,)+env.observation_space.shape, dtype=np.uint8)
         self._skip       = skip
+
 
     def step(self, aug_action):
         """Repeat action, sum reward, and max over last observations."""
@@ -139,7 +143,6 @@ class TempoRLSkipEnv(gym.Wrapper):
             done = None
             for i in range(self._skip):
                 obs, reward, done, info = self.env.step(action)
-                print(obs.shape)
                 if i == self._skip - 2: self._obs_buffer[0] = obs
                 if i == self._skip - 1: self._obs_buffer[1] = obs
                 total_reward += reward
@@ -155,50 +158,86 @@ class TempoRLSkipEnv(gym.Wrapper):
             action = aug_action[:-1]
             repeat = int(aug_action[-1])
             done = None
-            # for appending info
+            # for appending skip info
             start_states  = []
             repeats = []
             new_states = []
             discounted_skip_rewards = []
+            dones = []
             lengths = []
             behaviours = []
 
-            skip_states, skip_rewards = [], []
+            skip_states, skip_rewards, plain_ns, plain_dones = [], [], [], []
+            # resize before input
+            obs = self.env.env.ale.getScreenRGB()
+            obs = cv2.cvtColor(obs, cv2.COLOR_RGB2GRAY)
+            obs = cv2.resize(
+                obs, (84, 84), interpolation=cv2.INTER_AREA
+            )
+            obs = np.expand_dims(obs, -1)
+            low = np.repeat(env.observation_space.low, 4, axis=0)
+            self.stacked_obs = torch.zeros((16, ) + low.shape).to(device)
+
+
             for curr_skip in range(repeat + 1):
                 curr_skip_reward = 0
-                obs = self.env.env.ale.getScreenRGB().shape)
                 for i in range(self._skip):
-                    new_obs, reward, done, info = self.env.step(on)
+                    new_obs, reward, done, info = self.env.step(action)
                     if i == self._skip - 2: self._obs_buffer[0] = new_obs
                     if i == self._skip - 1: self._obs_buffer[1] = new_obs
                     total_reward += reward
                     curr_skip_reward += reward
+
+                    # Note that the observation on the done=True frame
+                    # doesn't matter
+                    skip_states.append(obs)
+                    skip_rewards.append(np.sign(curr_skip_reward))
+                    plain_dones.append(done)
+
+                    skip_id = 0
+                    for start_state in skip_states:
+                        skip_reward = 0
+                        for exp, r in enumerate(skip_rewards[skip_id:]):  # make sure to properly discount
+                            skip_reward += np.power(discount_rate, exp) * r
+
+                        # append infos
+                        start_states.append(obs)
+                        repeats.append(curr_skip - skip_id)
+                        new_obs = self._obs_buffer.max(axis=0)
+                        new_obs = cv2.cvtColor(new_obs, cv2.COLOR_RGB2GRAY)
+                        new_obs = cv2.resize(
+                            new_obs, (84, 84), interpolation=cv2.INTER_AREA
+                        )
+                        new_obs = np.expand_dims(new_obs, -1)
+                        new_states.append(new_obs)
+                        discounted_skip_rewards.append(skip_reward)
+                        dones.append(done)
+                        lengths.append(curr_skip - skip_id + 1)
+                        behaviours.append(np.array([action]))
+                        skip_id += 1
+
+
                     if done:
                         break
-                # Note that the observation on the done=True frame
-                # doesn't matter
-                skip_states.append(obs)
-                skip_rewards.append(curr_skip_reward)
-                obs = self._obs_buffer.max(axis=0)
 
-
-                skip_id = 0
-                for start_state in skip_states:
-                    skip_reward = 0
-                    for exp, r in enumerate(skip_rewards[skip_id:]):  # make sure to properly discount
-                        skip_reward += np.power(discount_rate, exp) * r
-                    skip_id += 1
-
-                    # append infos
+                    obs = new_obs
+                    plain_ns.append(obs)
                 
-
                 if done:
                     break
 
-            info['skip_states'] = skip_states
-            info['skip_rewards'] = skip_rewards
+            info['start_states'] = start_states
+            info['repeats'] = repeats
+            info['new_states'] = new_states
+            info['plain_ns'] = plain_ns
+            info['plain_rewards'] = skip_rewards
+            info['plain_dones'] = plain_dones
+            info['discounted_skip_rewards'] = discounted_skip_rewards
+            info['dones'] = dones
+            info['lengths'] = lengths
+            info['behaviours'] = behaviours
 
-            return max_frame, total_reward, done, info
+            return plain_ns[-1], total_reward, plain_dones[-1], info
 
     def reset(self, **kwargs):
         return self.env.reset(**kwargs)
@@ -251,12 +290,14 @@ class WarpFrame(gym.ObservationWrapper):
             frame = obs[self._key]
 
         if self._grayscale:
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-        frame = cv2.resize(
-            frame, (self._width, self._height), interpolation=cv2.INTER_AREA
-        )
-        if self._grayscale:
-            frame = np.expand_dims(frame, -1)
+            try:
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+                frame = cv2.resize(
+                frame, (self._width, self._height), interpolation=cv2.INTER_AREA
+                )
+                frame = np.expand_dims(frame, -1)
+            except:
+                pass
 
         if self._key is None:
             obs = frame
@@ -392,9 +433,9 @@ class AtariWrapper(gym.Wrapper):
         clip_reward: bool = True,
     ):
         env = NoopResetEnv(env, noop_max=noop_max)
-        env = TempoRLSkipEnv(env, skip=frame_skip)
+        env = TempoRLSkipEnv(env, skip=frame_skip, width=84, height=84, grayscale=True, dict_space_key=None)
         if terminal_on_life_loss:
-            env = TempoRLEpisodicLifeEnv(env)
+            env = EpisodicLifeEnv(env)
         if "FIRE" in env.unwrapped.get_action_meanings():
             env = FireResetEnv(env)
         env = WarpFrame(env, width=screen_size, height=screen_size)

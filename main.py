@@ -18,7 +18,7 @@ from a2c_ppo_acktr.algo import gail
 from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
 from a2c_ppo_acktr.model import Policy, TempoRLPolicy, Bandit_Policy
-from a2c_ppo_acktr.storage import RolloutStorage
+from a2c_ppo_acktr.storage import RolloutStorage, NoneConcatSkipReplayBuffer
 from evaluation import evaluate
 
 
@@ -146,8 +146,7 @@ def main():
                               actor_critic.recurrent_hidden_state_size)
     
     if args.algo == 'tempo_a2c':
-        skip_rollouts = None #ActionRepeatReplayBuffer(args.num_processes, envs.observation_space.shape, envs.action_space, 
-                                                # args.max_skip_dim)
+        skip_rollouts = NoneConcatSkipReplayBuffer(5e4)
         # the skip policy uses epsilon greedy exploration for learning
         initial_expl_noise = args.expl_noise
 
@@ -188,6 +187,7 @@ def main():
                         repeat = np.random.randint(args.max_skip_dim, size=envs.num_envs) # + 1 sonce randint samples from [0, max_rep)
                         # t += repeat
                     else:
+                        # print(obs.shape)
                         repeat = np.argmax(actor_critic.get_skip(obs, action), axis=1)
                         # t += repeat
                 if args.algo == 'b_a2c':
@@ -201,6 +201,14 @@ def main():
                 prev_obs = obs
                 aug_action = torch.cat((action, torch.from_numpy(repeat.reshape(-1,1)).to(device)), dim=1)
                 obs, reward, done, infos = envs.step(aug_action)
+                # print(obs.shape)
+                # print(reward, reward.shape)
+                # Update the skip replay buffer with all observed skips.
+                for info in infos:
+                    for ss, r, ns, sr, d, l, b in zip(info['start_states'], info['repeats'], info['new_states'], 
+                                                    info['discounted_skip_rewards'], info['dones'], info['lengths'], info['behaviours']):
+                        # print(ns.shape)
+                        skip_rollouts.add_transition(ss, r, ns, sr, d, l, b)
 
                 for info in infos:
                     if 'episode' in info.keys():
@@ -212,18 +220,11 @@ def main():
                 bad_masks = torch.FloatTensor(
                     [[0.0] if 'bad_transition' in info.keys() else [1.0]
                     for info in infos])
+                # Insert repeated rollout trajectories
                 rollouts.insert(obs, recurrent_hidden_states, action,
                                 action_log_prob, value, reward, masks, bad_masks)
                 # Update the skip buffer with all observed transitions in the local connectedness graph
-                skip_id = 0
-                for start_state in skip_states:
-                    skip_reward = 0
-                    for exp, r in enumerate(skip_rewards[skip_id:]):
-                        skip_reward += np.power(args.gamma, exp) * r
-                    skip_rollouts.add(start_state, action, curr_skip - skip_id, skip_reward, done)
-                    skip_id += 1
-                if done:
-                    break
+      
 
             else:
                 # Obser reward and next obs
@@ -264,15 +265,32 @@ def main():
                     rollouts.obs[step], rollouts.actions[step], args.gamma,
                     rollouts.masks[step])
 
+        if args.algo == 'tempo_a2c':
+            # Skip Q update based on double DQN where target is behavior Q
+            batch_states, batch_actions, batch_next_states, batch_rewards,\
+                batch_terminal_flags, batch_lengths, batch_behaviours = \
+                skip_rollouts.random_next_batch(args.tempo_batch_size)
+            # print(batch_next_states.shape)
+            
+            target = batch_rewards + (1 - batch_terminal_flags) * torch.pow(batch_lengths, args.gamma) * \
+                        actor_critic.get_value(batch_next_states, False, None)[torch.arange(args.tempo_batch_size).long(), torch.argmax(
+                            actor_critic.get_value(batch_next_states, False, None), dim=1)]
+            current_prediction = actor_critic.skip_Q(batch_states, batch_behaviours)[
+                        torch.arange(args.tempo_batch_size).long(), batch_actions.long()]
+            print(current_prediction)
+            
+            loss = actor_critic.skip_loss_function(current_prediction, target.detach())
+            loss.backward()
+            actor_critic.skip_q_optimizer.step()
+
+    
         rollouts.compute_returns(next_value, args.use_gae, args.gamma,
                                  args.gae_lambda, args.use_proper_time_limits)
 
         value_loss, action_loss, dist_entropy = agent.update(rollouts)
-        if args.algo == 'tempo_a2c':
-            agent.train_skip(skip_rollouts, args.tempo_batch_size) # batch size is set to 256
-
-
         rollouts.after_update()
+
+
 
         # save for every interval-th episode or for the last epoch
         if (j % args.save_interval == 0

@@ -1,6 +1,20 @@
 from os import stat_result
 import torch
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
+from collections import namedtuple
+import numpy as np
+from torch.autograd import Variable
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def tt(ndarray):
+    """
+    Helper Function to cast observation to correct type/device
+    """
+    if device.type == "cuda":
+        return Variable(torch.from_numpy(ndarray).float().cuda(), requires_grad=False)
+    else:
+        return Variable(torch.from_numpy(ndarray).float(), requires_grad=False)
 
 
 def _flatten_helper(T, N, _tensor):
@@ -252,3 +266,50 @@ class RolloutStorage(object):
 #             torch.FloatTensor(self.reward[ind]).to(self.device),
 #             torch.FloatTensor(self.not_done[ind]).to(self.device)
 #         )
+
+class NoneConcatSkipReplayBuffer:
+    """
+    Replay Buffer for training the skip-Q.
+    Expects states in which the behaviour-action is not siply concatenated for the skip-Q.
+    Stores transitions as usual but with additional skip-length. The skip-length is used to properly discount.
+    Additionally stores the behaviour_action which is the context for this skip-transition.
+    """
+
+    def __init__(self, max_size):
+        self._data = namedtuple("ReplayBuffer", ["states", "actions", "next_states",
+                                                 "rewards", "terminal_flags", "lengths", "behaviour_action"])
+        self._data = self._data(states=[], actions=[], next_states=[], rewards=[], terminal_flags=[], lengths=[],
+                                behaviour_action=[])
+        self._size = 0
+        self._max_size = max_size
+
+    def add_transition(self, state, action, next_state, reward, done, length, behaviour):
+        self._data.states.append(state)
+        self._data.actions.append(action)
+        self._data.next_states.append(next_state)
+        self._data.rewards.append(reward)
+        self._data.terminal_flags.append(done)
+        self._data.lengths.append(length)  # Observed skip-length
+        self._data.behaviour_action.append(behaviour)  # Behaviour action to condition skip on
+        self._size += 1
+
+        if self._size > self._max_size:
+            self._data.states.pop(0)
+            self._data.actions.pop(0)
+            self._data.next_states.pop(0)
+            self._data.rewards.pop(0)
+            self._data.terminal_flags.pop(0)
+            self._data.lengths.pop(0)
+            self._data.behaviour_action.pop(0)
+
+    def random_next_batch(self, batch_size):
+        batch_indices = np.random.choice(len(self._data.states), batch_size)
+        batch_states = np.array([self._data.states[i] for i in batch_indices])
+        batch_actions = np.array([self._data.actions[i] for i in batch_indices])
+        batch_next_states = np.array([self._data.next_states[i] for i in batch_indices])
+        batch_rewards = np.array([self._data.rewards[i] for i in batch_indices])
+        batch_terminal_flags = np.array([self._data.terminal_flags[i] for i in batch_indices])
+        batch_lengths = np.array([self._data.lengths[i] for i in batch_indices])
+        batch_behavoiurs = np.array([self._data.behaviour_action[i] for i in batch_indices])
+        return tt(batch_states), tt(batch_actions), tt(batch_next_states),\
+               tt(batch_rewards), tt(batch_terminal_flags), tt(batch_lengths), tt(batch_behavoiurs)
