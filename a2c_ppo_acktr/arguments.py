@@ -183,7 +183,7 @@ def get_args():
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    assert args.algo in ['a2c', 'ppo', 'acktr', 'b_a2c', 'tempo_a2c']
+    assert args.algo in ['a2c', 'ppo', 'acktr', 'b_a2c', 'tempo_a2c', 'dqn']
     if args.recurrent_policy:
         assert args.algo in ['a2c', 'ppo', 'b_a2c', 'tempo_a2c'], \
             'Recurrent policy is not implemented for ACKTR'

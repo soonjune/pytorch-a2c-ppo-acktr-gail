@@ -113,7 +113,6 @@ class DQN(OffPolicyAlgorithm):
             optimize_memory_usage=optimize_memory_usage,
             supported_action_spaces=(gym.spaces.Discrete,),
             support_multi_env=True,
-            double_dqn=True
         )
 
         self.exploration_initial_eps = exploration_initial_eps
@@ -129,7 +128,7 @@ class DQN(OffPolicyAlgorithm):
         self.exploration_schedule = None
         self.q_net, self.q_net_target = None, None
         # enable double dqn
-        self.double_dqn = double_dqn
+        self.double_dqn = True
 
         if _init_setup_model:
             self._setup_model()
