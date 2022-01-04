@@ -199,7 +199,7 @@ def main():
                         finisehd_repeat = repeats < 0
                         curr_skip += 1
                         for idx, finished in enumerate(finisehd_repeat):
-                            if finished:
+                            if finished or done[idx]:
                                 curr_skip[idx] = 0
                                 repeats[idx] = repeat[idx]
                                 act_continue[idx] = action[idx]
@@ -250,7 +250,6 @@ def main():
                 # Insert repeated rollout trajectories
                 rollouts.insert(obs, recurrent_hidden_states, act_continue,
                                 action_log_prob, value, reward, masks, bad_masks)
-                # Update the skip buffer with all observed transitions in the local connectedness graph
       
 
             else:
@@ -294,7 +293,7 @@ def main():
                     rollouts.masks[step])
 
         if args.algo == 'tempo_a2c':
-            # Skip Q update based on double DQN where target is behavior Q
+            # Update the skip buffer with all observed transitions in the local connectedness graph
             batch_states, batch_actions, batch_next_states, batch_rewards,\
                 batch_terminal_flags, batch_lengths, batch_behaviours = \
                 skip_rollouts.random_next_batch(args.tempo_batch_size)
