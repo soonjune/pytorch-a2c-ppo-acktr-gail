@@ -157,7 +157,6 @@ def main():
     rollouts.to(device)
 
     episode_rewards = deque(maxlen=10)
-    skip_l = []
 
     start = time.time()
     num_updates = int(
@@ -167,6 +166,7 @@ def main():
     log_file_wr = csv.writer(log_file)
     log_file_wr.writerow(['Updates', 'total_num_steps', 'Last 10 mean_episode_rewards', 'Avg_skips'])
     for j in range(num_updates):
+        skip_l = []
 
         if args.use_linear_lr_decay:
             # decrease learning rate linearly
@@ -333,12 +333,12 @@ def main():
         if j % args.log_interval == 0 and len(episode_rewards) > 1:
 
             total_num_steps = (j + 1) * args.num_processes * args.num_steps
+            print(f"mean extension {skip_l[0]+1}, epsilon: {expl_noise}")
             # epsilon decay
             if args.algo == 'tempo_a2c':
                 expl_noise = max(0.01, initial_expl_noise - (initial_expl_noise * (total_num_steps/200000)))
 
             end = time.time()
-            print(f"mediean extension: {np.median(skip_l)}, min/max extension: {np.min(skip_l)}/{np.max(skip_l)}")
             print("Updates {}, num timesteps {}, FPS {} \n Last {} training episodes: mean/median reward {:.1f}/{:.1f}, min/max reward {:.1f}/{:.1f}\n"\
                 .format(j, total_num_steps,
                         int(total_num_steps / (end - start)),

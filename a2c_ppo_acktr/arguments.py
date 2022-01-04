@@ -153,7 +153,7 @@ def get_args():
     ## for TempoRL
     parser.add_argument(
         '--max-skip-dim',
-        action='store_true',
+        type=int,
         default=5,
         help='maximum skip length (skip_dim) for TempoRL')
     parser.add_argument(
@@ -171,6 +171,7 @@ def get_args():
     ## for bandit
     parser.add_argument(
         '--nbArms',
+        type=int,
         default=5,
         help='max extend length')
     parser.add_argument(
