@@ -149,11 +149,16 @@ def get_args():
         action='store_true',
         default=False,
         help='use a linear schedule on the learning rate')
+    parser.add_argument(
+        '--pre-trained',
+        type=bool,
+        default=False,
+        help='use pretrained encoder or not')
 
     ## for bandit
     parser.add_argument(
         '--nbArms',
-        default=3,
+        default=15,
         help='max extend length')
     parser.add_argument(
         '--bandit-dim',

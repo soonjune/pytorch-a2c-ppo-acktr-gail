@@ -17,7 +17,7 @@ from a2c_ppo_acktr import algo, utils
 from a2c_ppo_acktr.algo import gail
 from a2c_ppo_acktr.arguments import get_args
 from a2c_ppo_acktr.envs import make_vec_envs
-from a2c_ppo_acktr.model import Policy, Bandit_Policy
+from a2c_ppo_acktr.model import Policy, Bandit_Policy, Perturb_Bandit_Policy
 from a2c_ppo_acktr.storage import RolloutStorage, SkipReplayBuffer
 from evaluation import evaluate
 
@@ -49,10 +49,15 @@ def main():
     envs = make_vec_envs(args.env_name, args.seed, args.num_processes,
                          args.gamma, monitor_dir, device, False)
 
-    actor_critic = Policy(
-        envs.observation_space.shape,
-        envs.action_space,
-        base_kwargs={'recurrent': args.recurrent_policy})
+    if args.pre_trained:
+        num = 'a2c' + '_3'
+        path = f"./experiments/{args.env_name}/a2c/{num}/trained_models/{args.env_name}.pt"
+        actor_critic = torch.load(path)[0]
+    else:
+        actor_critic = Policy(
+            envs.observation_space.shape,
+            envs.action_space,
+            base_kwargs={'recurrent': args.recurrent_policy})
     actor_critic.to(device)
 
     if args.algo == 'a2c':
@@ -87,7 +92,7 @@ def main():
             bandit_dim,
             base_kwargs={'recurrent': args.recurrent_policy})
         bandit.to(device)
-        skip_replay_buffer = SkipReplayBuffer(80)
+        skip_replay_buffer = SkipReplayBuffer(1000)
         agent = algo.Bandit_A2C_ACKTR(
             actor_critic,
             bandit,
@@ -139,9 +144,10 @@ def main():
     log_file = open(log_file_name,'a', newline='')
     log_file_wr = csv.writer(log_file)
     log_file_wr.writerow(['Updates', 'total_num_steps', 'Last 10 mean_episode_rewards', 'Avg_skips'])
+
+    skip_update_count = 0
     for j in range(num_updates):
-        skips_l = []
-        decision_count = 0
+        skips_l = [] 
         if args.use_linear_lr_decay:
             # decrease learning rate linearly
             utils.update_linear_schedule(
@@ -154,7 +160,7 @@ def main():
                 if args.algo == 'b_a2c':
                     if step+j>0:
                         if len(zero_idx)>0: # skip update
-                            start_obs[zero_idx] = rollouts.obs[step][zero_idx].clone().detach() # update start skip obs of all processes
+                            start_obs[zero_idx] = rollouts.obs[step][zero_idx].clone().detach() # update start skip obs 
                             value[zero_idx], action[zero_idx], action_log_prob[zero_idx], recurrent_hidden_states[zero_idx] = actor_critic.act(
                                 rollouts.obs[step][zero_idx], rollouts.recurrent_hidden_states[step][zero_idx],
                                 rollouts.masks[step][zero_idx])
@@ -175,7 +181,7 @@ def main():
                         rollouts.masks[step])
                     skips = 1
             skips_l.append(np.mean(skips))
-
+            
             # Obser reward and next obs
             obs, reward, done, infos = envs.step(action)
 
@@ -193,14 +199,34 @@ def main():
             rollouts.insert(obs, recurrent_hidden_states, action,
                             action_log_prob, value, reward, masks, bad_masks)
             
-            # skip replay buffer
+            # add skip history to skip replay buffer 
             if args.algo == 'b_a2c': 
                 skips = masks.squeeze().numpy()*(skips-1)
                 zero_idx = np.where(skips==0)[0]
                 for idx in zero_idx:
-                    decision_count+=1
+                    skip_update_count+=1
                     skip_replay_buffer.add_transition(start_obs[idx], action[idx], obs[idx],\
                         recurrent_hidden_states[idx], reward[idx], masks[idx], arms[idx]) 
+
+            # update bandit
+            if (args.algo == 'b_a2c') and (skip_update_count>32): 
+                # Update Bandit
+                batch_skip_obs, batch_skip_actions, batch_skip_next_obs, batch_recurrent_hidden_states, _, \
+                batch_masks, batch_skip_arms = skip_replay_buffer.recent_batch_sample(skip_update_count)
+                # reward 포함
+                '''target_rewards = batch_rewards + batch_masks.detach().to(device) * self._gamma * \
+                            torch.max(self._q(batch_next_states), dim=1)[0]'''
+                # reward 미포함
+                target_rewards = batch_masks.detach().to(device)*actor_critic.get_value(    # test 1.batch_masks 추가 -> 이게 잘되는듯?
+                        batch_skip_next_obs, batch_recurrent_hidden_states,
+                        batch_masks).detach()
+
+                agent.bandit_train(batch_skip_obs, batch_skip_actions, batch_recurrent_hidden_states, batch_masks,\
+                        batch_skip_arms, target_rewards, skip_update_count)  
+
+                skip_update_count = 0   
+                skip_replay_buffer.reset()
+
 
         with torch.no_grad():
             next_value = actor_critic.get_value(
@@ -229,22 +255,7 @@ def main():
 
         value_loss, action_loss, dist_entropy = agent.update(rollouts)
 
-        rollouts.after_update()
-
-        if args.algo == 'b_a2c': 
-            # Update Bandit
-            batch_skip_obs, batch_skip_actions, batch_skip_next_obs, batch_recurrent_hidden_states, _, \
-            batch_masks, batch_skip_arms = skip_replay_buffer.recent_batch_sample(decision_count)
-            # reward 포함
-            '''target_rewards = batch_rewards + batch_masks.detach().to(device) * self._gamma * \
-                        torch.max(self._q(batch_next_states), dim=1)[0]'''
-            # reward 미포함
-            target_rewards = batch_masks.detach().to(device)*actor_critic.get_value(    # test 1.batch_masks 추가 -> 이게 잘되는듯?
-                    batch_skip_next_obs, batch_recurrent_hidden_states,
-                    batch_masks).detach()
-
-            agent.bandit_train(batch_skip_obs, batch_skip_actions, batch_recurrent_hidden_states, batch_masks,\
-                    batch_skip_arms, target_rewards, decision_count)       
+        rollouts.after_update()  
 
         # save for every interval-th episode or for the last epoch
         if (j % args.save_interval == 0

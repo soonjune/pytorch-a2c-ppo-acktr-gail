@@ -230,11 +230,7 @@ class SkipReplayBuffer:
     """
 
     def __init__(self, max_size):
-        self._data = namedtuple("ReplayBuffer", ["states", "actions", "next_states", "recurrent_hidden_states",
-                                                 "rewards", "masks", "lengths"])
-        self._data = self._data(states=[], actions=[], next_states=[], recurrent_hidden_states=[], \
-            rewards=[], masks=[], lengths=[])
-        self._size = 0
+        self.reset()
         self._max_size = max_size
 
     def add_transition(self, state, action, next_state, recurrent_hidden_states, reward, masks, length):
@@ -279,3 +275,10 @@ class SkipReplayBuffer:
         batch_lengths = np.array([self._data.lengths[i] for i in batch_indices])
         return batch_states, batch_actions, batch_next_states,\
                batch_recurrent_hidden_states, batch_rewards, batch_masks, tt_long(batch_lengths)
+
+    def reset(self):
+        self._data = namedtuple("ReplayBuffer", ["states", "actions", "next_states", "recurrent_hidden_states",
+                                                 "rewards", "masks", "lengths"])
+        self._data = self._data(states=[], actions=[], next_states=[], recurrent_hidden_states=[], \
+            rewards=[], masks=[], lengths=[])
+        self._size = 0
