@@ -49,7 +49,7 @@ In order to install requirements, follow:
 
 ```bash
 # PyTorch
-conda install pytorch torchvision -c soumith
+conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch
 
 # Other requirements
 pip install -r requirements.txt

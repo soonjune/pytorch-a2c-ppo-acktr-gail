@@ -149,6 +149,11 @@ def get_args():
         action='store_true',
         default=False,
         help='use a linear schedule on the learning rate')
+    parser.add_argument(
+        '--pre-trained',
+        type=bool,
+        default=False,
+        help='use pretrained encoder or not')
 
     ## for bandit
     parser.add_argument(
@@ -157,14 +162,19 @@ def get_args():
         help='max extend length')
     parser.add_argument(
         '--bandit-dim',
-        default=30,
+        default=512,
+        type=int,
         help='latent dim of bandit net')
+    parser.add_argument(
+        '--bandit-update-interval',
+        default=5,
+        help='update frequency of bandt')    
 
     args = parser.parse_args()
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    assert args.algo in ['a2c', 'ppo', 'acktr', 'b_a2c']
+    assert args.algo in ['a2c', 'ppo', 'acktr', 'b_a2c', 'b_ppo', 'dqn', 'bdqn']
     if args.recurrent_policy:
         assert args.algo in ['a2c', 'ppo', 'b_a2c'], \
             'Recurrent policy is not implemented for ACKTR'
