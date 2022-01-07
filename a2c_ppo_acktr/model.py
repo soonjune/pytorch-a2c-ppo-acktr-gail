@@ -300,7 +300,14 @@ class Bandit_Policy(Policy):
         many_hot_arm_idx = (v<=arm_idx).float().to(device) # 16KxK
         context = torch.cat((context,many_hot_arm_idx),dim=1).to(device) #16Kx(S+A+K)
         with torch.no_grad():
-            N = torch.distributions.multivariate_normal.MultivariateNormal(self.thetaLS.view(-1),(self.nu*self.nu)*self.DesignInv)
+            try:
+                N = torch.distributions.multivariate_normal.MultivariateNormal(self.thetaLS.view(-1),(self.nu*self.nu)*self.DesignInv)
+            except ValueError:
+                try:
+                    N = torch.distributions.multivariate_normal.MultivariateNormal(self.thetaLS.view(-1),(self.nu*self.nu)*self.DesignInv+0.0001*torch.eye(self.bandit_dim, device=device)) 
+                except ValueError:
+                    N = torch.distributions.multivariate_normal.MultivariateNormal(self.thetaLS.view(-1),(self.nu*self.nu)*self.DesignInv+0.001*torch.eye(self.bandit_dim, device=device))
+
             theta_tilda = N.sample() # d
             theta_tilda = torch.as_tensor(theta_tilda).to(device)
             z = self.Bandit_Net(context) # 16Kxd
@@ -341,8 +348,9 @@ class Bandit_Policy(Policy):
             self.Design = self.Design + torch.matmul(z.T,z) # (dxB) x (Bxd) -> dxd 
             self.Vector = self.Vector + torch.sum(target_rewards.detach()*z, 0).view(-1,1) # Bx1 * Bxd -> Bxd -> dx1
             # online update of the inverse of the design matrix
-            omega=torch.matmul(z,self.DesignInv) # (Bxd) x (dxd) -> Bxd           
-            self.DesignInv= self.DesignInv- torch.matmul(omega.T,omega)/(1+torch.trace(torch.matmul(z,omega.T)).item()) # (dxd) / (BxB) -> dxd
+            #omega=torch.matmul(z,self.DesignInv) # (Bxd) x (dxd) -> Bxd           
+            #self.DesignInv= self.DesignInv- torch.matmul(omega.T,omega)/(1+torch.trace(torch.matmul(z,omega.T)).item()) # (dxd) / (BxB) -> dxd
+            self.DesignInv = self.Design.inverse()
             # update of the least squares estimate 
             self.thetaLS = torch.matmul(self.DesignInv,self.Vector) # d
             self.t+=1

@@ -6,13 +6,31 @@ python main.py --env-name "MsPacmanNoFrameskip-v4" --seed 1 --algo b_a2c
 python main.py --env-name "FreewayNoFrameskip-v4" --seed 1 --algo b_a2c --num-processes 1
 python main.py --env-name "QbertNoFrameskip-v4" --seed 1 --algo b_a2c
 
-python main.py --env-name "QbertNoFrameskip-v4" --seed 1 --algo a2c
-python main.py --env-name "FreewayNoFrameskip-v4" --seed 1 --algo a2c 
+ python main.py --env-name "FreewayNoFrameskip-v4" --seed 1 --algo a2c 
 
 
 2. PPO
-python main.py --env-name "PongNoFrameskip-v4" --algo ppo --use-gae --lr 2.5e-4 --clip-param 0.1 --value-loss-coef 0.5 --num-processes 8 --num-steps 128 --num-mini-batch 4 --log-interval 1 --use-linear-lr-decay --entropy-coef 0.01
-python main.py --env-name "PongNoFrameskip-v4" --algo b_a2c --use-gae --lr 2.5e-4 --clip-param 0.1 --value-loss-coef 0.5 --num-processes 8 --num-steps 128 --num-mini-batch 4 --log-interval 1 --use-linear-lr-decay --entropy-coef 0.01
+python main.py --env-name "MsPacmanNoFrameskip-v4" --algo ppo --use-gae --lr 2.5e-4 --clip-param 0.1 --value-loss-coef 0.5 --num-processes 8 --num-steps 128 --num-mini-batch 4 --log-interval 1 --use-linear-lr-decay --entropy-coef 0.01
+python main.py --env-name "MsPacmanNoFrameskip-v4" --algo b_ppo --use-gae --lr 2.5e-4 --clip-param 0.1 --value-loss-coef 0.5 --num-processes 8 --num-steps 128 --num-mini-batch 4 --log-interval 1 --use-linear-lr-decay --entropy-coef 0.01
 
 3. ACKTR
 python main.py --env-name "PongNoFrameskip-v4" --algo acktr --num-processes 32 --num-steps 20
+
+4. DQN
+1) Breakout: 380~400 
+python main.py --env-name "BreakoutNoFrameskip-v4" --algo dqn --num-processes 1 --num-steps 1 --num-mini-batch 64 --log-interval 50 --save-interval 500
+python main.py --env-name "BreakoutNoFrameskip-v4" --algo bdqn --num-processes 1 --num-steps 1 --num-mini-batch 64 --log-interval 50 --save-interval 500 
+
+2) Qbert: 11000 
+python main.py --env-name "QbertNoFrameskip-v4" --algo dqn --num-processes 1 --num-steps 1 --num-mini-batch 64 --log-interval 50 --save-interval 500
+python main.py --env-name "QbertNoFrameskip-v4" --algo bdqn --num-processes 1 --num-steps 1 --num-mini-batch 64 --log-interval 50 --save-interval 500
+
+3) SpaceInvaders: 862 
+python main.py --env-name "SpaceInvadersNoFrameskip-v4" --algo dqn --num-processes 1 --num-steps 1 --num-mini-batch 64 --log-interval 50 --save-interval 500
+python main.py --env-name "SpaceInvadersNoFrameskip-v4" --algo bdqn --num-processes 1 --num-steps 1 --num-mini-batch 64 --log-interval 50 --save-interval 500 
+
+4) BeamRider: 4206 -> +bandit: 4676
+python main.py --env-name "BeamRiderNoFrameskip-v4" --algo dqn --num-processes 1 --num-steps 1 --num-mini-batch 64 --log-interval 50 --save-interval 500
+python main.py --env-name "BeamRiderNoFrameskip-v4" --algo bdqn --num-processes 1 --num-steps 1 --num-mini-batch 64 --log-interval 50 --save-interval 500 
+
+
